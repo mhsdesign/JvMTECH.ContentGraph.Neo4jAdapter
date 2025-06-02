@@ -1,0 +1,6 @@
+JvMTECH\ContentGraph\Neo4jAdapter\Neo4jContentGraphProjectionFactory:
+  scope: singleton
+  factoryObjectName: 'Neos\ContentRepositoryRegistry\Infrastructure\GenericObjectFactory'
+  arguments:
+    1:
+      value: 'JvMTECH\ContentGraph\Neo4jAdapter\Neo4jContentGraphProjectionFactory'

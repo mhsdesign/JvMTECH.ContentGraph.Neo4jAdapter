@@ -1,0 +1,6 @@
+Neos:
+  ContentRepositoryRegistry:
+    presets:
+      'default':
+        contentGraphProjection:
+          factoryObjectName: JvMTECH\ContentGraph\Neo4jAdapter\Neo4jContentGraphProjectionFactory
