@@ -16,6 +16,7 @@ use JvMTECH\ContentGraph\Neo4jAdapter\Domain\Repository\Neo4jProjectionContentGr
 use Laudis\Neo4j\Contracts\ClientInterface;
 use Laudis\Neo4j\Databags\Statement;
 use Laudis\Neo4j\Databags\SummarizedResult;
+use Laudis\Neo4j\Types\CypherMap;
 use Laudis\Neo4j\Types\Node;
 use Neos\ContentRepository\Core\DimensionSpace\OriginDimensionSpacePoint;
 use Neos\ContentRepository\Core\EventStore\EventInterface;
@@ -57,6 +58,7 @@ use Neos\ContentRepository\Core\Projection\ProjectionStatus;
 use Neos\ContentRepository\Core\SharedModel\Node\NodeAggregateId;
 use Neos\ContentRepository\Core\SharedModel\Workspace\ContentStreamId;
 use Neos\EventStore\Model\EventEnvelope;
+use SebastianBergmann\CodeCoverage\Report\Xml\Project;
 
 class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
 {
@@ -136,6 +138,8 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
             );
         }
     }
+
+
 
     public function apply(EventInterface $event, EventEnvelope $eventEnvelope): void
     {
@@ -1265,11 +1269,7 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
 
     public function resetState(): void
     {
-        $this->client->runStatement(
-            Statement::create(
-                'MATCH (n) DETACH DELETE n'
-            )
-        );
+        $this->client->runStatement(Statement::create('MATCH (n) DETACH DELETE n'));
     }
 
     public function status(): ProjectionStatus
@@ -1279,20 +1279,10 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
         }
 
         $currentIndexes = $this->client->run('SHOW INDEXES');
-        foreach ($this->requiredIndexes as $requiredIndex) {
-            foreach ($currentIndexes->toArray() as $currentIndex) {
-                if (
-                    $currentIndex['name'] === $requiredIndex['name']
-                    && $currentIndex['entityType'] === $requiredIndex['entityType']
-                    && $currentIndex['properties'][0] === $requiredIndex['properties'][0]
-                ) {
-                    continue 2; // Found the required index, continue to the next required index
-                }
-            }
-            return ProjectionStatus::setupRequired('setup required');
+        if (empty(array_udiff_assoc($currentIndexes->toArray(), $this->requiredIndexes, fn(CypherMap $a, array $b) => strcmp($a['name'], $b['name'])))) {
+            return ProjectionStatus::ok();
         }
-
-        return ProjectionStatus::ok();
+        return ProjectionStatus::setupRequired('setup required');
     }
 
     private static function initiatingDateTime(EventEnvelope $eventEnvelope): DateTimeImmutable

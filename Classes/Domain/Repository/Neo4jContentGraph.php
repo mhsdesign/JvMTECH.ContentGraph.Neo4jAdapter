@@ -83,10 +83,11 @@ class Neo4jContentGraph implements ContentGraphInterface
     public function findRootNodeAggregateByType(NodeTypeName $nodeTypeName): ?NodeAggregate
     {
         $filter = Filter\FindRootNodeAggregatesFilter::create($nodeTypeName);
-        if ($this->findRootNodeAggregates($filter)->isEmpty()) {
-            throw new \Exception('No root node aggregate found for type: ' . $nodeTypeName->value, 1749225213);
+        $aggregates = $this->findRootNodeAggregates($filter);
+        if ($aggregates->isEmpty()) {
+            return null;
         }
-        return $this->findRootNodeAggregates($filter)->first();
+        return $aggregates->first();
     }
 
     /**
@@ -102,6 +103,9 @@ class Neo4jContentGraph implements ContentGraphInterface
             ->build();
         $result = $this->client->runStatement($statement);
 
+        if ($result->isEmpty()) {
+            return NodeAggregates::createEmpty();
+        }
         return $this->nodeFactory->mapResultToNodeAggregates(
             $result,
             $this->workspaceName,
@@ -208,8 +212,28 @@ class Neo4jContentGraph implements ContentGraphInterface
         NodeAggregateId $childNodeAggregateId,
         OriginDimensionSpacePoint $childOriginDimensionSpacePoint
     ): ?NodeAggregate {
-        throw new \Exception('findParentNodeAggregateByChildOriginDimensionSpacePoint() is not implemented yet.', 1749225143);
-        // TODO: Implement findParentNodeAggregateByChildOriginDimensionSpacePoint() method.
+        $result = $this->client->runStatement(
+            Statement::create(
+                'MATCH (:Node {aggregateId: $aggregateId})-[:IS_CHILD {contentStreamId: $contentStreamId, dimensionSpacePointHash: $dimensionSpacePointHash}]->(parentNode:Node)
+                MATCH (n:Node {aggregateId: parentNode.aggregateId})-[rel:IS_CHILD {contentStreamId: $contentStreamId}]->()
+                RETURN n.aggregateId as aggregateId, n.nodeTypeName as nodeTypeName, n.name as name,
+                    n.classification as classification, n.originDimensionSpacePointHash as originDimensionSpacePointHash,
+                    n.created as created, n.originalCreated as originalCreated, n.lastModified as lastModified, n.originalLastModified as originalLastModified,
+                    n.properties as properties, rel.dimensionSpacePointHash as dimensionSpacePointHash',
+                [
+                    'aggregateId' => $childNodeAggregateId->value,
+                    'contentStreamId' => $this->getContentStreamId()->value,
+                    'dimensionSpacePointHash' => $childOriginDimensionSpacePoint->toDimensionSpacePoint()->hash,
+                ]
+            )
+        );
+        if ($result->isEmpty()) {
+            return null;
+        }
+        return $this->nodeFactory->mapResultToNodeAggregate(
+            $result,
+            $this->workspaceName,
+        );
     }
 
     /**
@@ -217,10 +241,10 @@ class Neo4jContentGraph implements ContentGraphInterface
      */
     public function findParentNodeAggregates(NodeAggregateId $childNodeAggregateId): NodeAggregates
     {
-        $aggregatesResult = $this->client->runStatement(
+        $result = $this->client->runStatement(
             Statement::create(
-                'MATCH (:Node {aggregateId: $aggregateID})-[:IS_CHILD {contentStreamId: $contentStreamId}]->(parentNode:Node)
-                MATCH (n:Node {aggregateId: parentNode.aggregateId)-[rel:IS_CHILD {contentStreamId: $contentStreamId}]->()
+                'MATCH (:Node {aggregateId: $aggregateId})-[:IS_CHILD {contentStreamId: $contentStreamId}]->(parentNode:Node)
+                MATCH (n:Node {aggregateId: parentNode.aggregateId})-[rel:IS_CHILD {contentStreamId: $contentStreamId}]->()
                 RETURN n.aggregateId as aggregateId, n.nodeTypeName as nodeTypeName, n.name as name,
                     n.classification as classification, n.originDimensionSpacePointHash as originDimensionSpacePointHash,
                     n.created as created, n.originalCreated as originalCreated, n.lastModified as lastModified, n.originalLastModified as originalLastModified,
@@ -232,8 +256,11 @@ class Neo4jContentGraph implements ContentGraphInterface
             )
         );
 
+        if ($result->isEmpty()) {
+            return NodeAggregates::createEmpty();
+        }
         return $this->nodeFactory->mapResultToNodeAggregates(
-            $aggregatesResult,
+            $result,
             $this->workspaceName,
         );
     }
@@ -243,7 +270,6 @@ class Neo4jContentGraph implements ContentGraphInterface
      */
     public function findAncestorNodeAggregateIds(NodeAggregateId $entryNodeAggregateId): NodeAggregateIds
     {
-        /** @var SummarizedResult $result */
         $result = $this->client->runStatement(
             Statement::create(
                 'MATCH (n:Node {aggregateId: $aggregateId})-[:IS_CHILD {contentStreamId: $contentStreamId}]->(ancestorNode:Node)
@@ -254,6 +280,9 @@ class Neo4jContentGraph implements ContentGraphInterface
                 ]
             )
         );
+        if ($result->isEmpty()) {
+            return NodeAggregateIds::createEmpty();
+        }
         return NodeAggregateIds::fromArray($result->map(fn(CypherMap $row) => ($row->hasKey('aggregateId') ? NodeAggregateId::fromString($row->get('aggregateId')) : null))->toArray());
     }
 
@@ -264,15 +293,22 @@ class Neo4jContentGraph implements ContentGraphInterface
     {
         $result = $this->client->runStatement(
             Statement::create(
-                'MATCH (n:Node {aggregateId: $aggregateId})-[rel:IS_CHILD {contentStreamId: $contentStreamId}]->()
-                MATCH (childNode:Node)-[:IS_CHILD {contentStreamId: $contentStreamId}]->(n)
-                RETURN childNode',
+                'MATCH (original:Node {aggregateId: $aggregateId})-[:IS_CHILD {contentStreamId: $contentStreamId}]->()
+                MATCH (n:Node)-[rel:IS_CHILD {contentStreamId: $contentStreamId}]->(original)
+                RETURN n.aggregateId as aggregateId, n.nodeTypeName as nodeTypeName, n.name as name,
+                    n.classification as classification, n.originDimensionSpacePointHash as originDimensionSpacePointHash,
+                    n.created as created, n.originalCreated as originalCreated, n.lastModified as lastModified, n.originalLastModified as originalLastModified,
+                    n.properties as properties, rel.dimensionSpacePointHash as dimensionSpacePointHash',
                 [
                     'aggregateId' => $parentNodeAggregateId->value,
                     'contentStreamId' => $this->contentStreamId->value,
                 ],
             )
         );
+
+        if ($result->isEmpty()) {
+            return NodeAggregates::createEmpty();
+        }
 
         return $this->nodeFactory->mapResultToNodeAggregates($result, $this->workspaceName);
     }
@@ -284,9 +320,12 @@ class Neo4jContentGraph implements ContentGraphInterface
     {
         $result = $this->client->runStatement(
             Statement::create(
-                'MATCH (n:Node {aggregateId: $aggregateId})-[rel:IS_CHILD {contentStreamId: $contentStreamId, }]->()
-                MATCH (childNode:Node {name: $name})-[:IS_CHILD {contentStreamId: $contentStreamId}]->(n)
-                RETURN childNode',
+                'MATCH (original:Node {aggregateId: $aggregateId})-[:IS_CHILD {contentStreamId: $contentStreamId}]->()
+                MATCH (n:Node {name: $name})-[rel:IS_CHILD {contentStreamId: $contentStreamId}]->(original)
+                RETURN n.aggregateId as aggregateId, n.nodeTypeName as nodeTypeName, n.name as name,
+                    n.classification as classification, n.originDimensionSpacePointHash as originDimensionSpacePointHash,
+                    n.created as created, n.originalCreated as originalCreated, n.lastModified as lastModified, n.originalLastModified as originalLastModified,
+                    n.properties as properties, rel.dimensionSpacePointHash as dimensionSpacePointHash',
                 [
                     'aggregateId' => $parentNodeAggregateId->value,
                     'contentStreamId' => $this->contentStreamId->value,
@@ -294,6 +333,10 @@ class Neo4jContentGraph implements ContentGraphInterface
                 ],
             )
         );
+
+        if ($result->isEmpty()) {
+            return null;
+        }
 
         return $this->nodeFactory->mapResultToNodeAggregate($result, $this->workspaceName);
     }
@@ -305,16 +348,23 @@ class Neo4jContentGraph implements ContentGraphInterface
     {
         $result = $this->client->runStatement(
             Statement::create(
-                'MATCH (n:Node {aggregateId: $aggregateId})-[rel:IS_CHILD {contentStreamId: $contentStreamId, }]->()
-                MATCH (childNode:Node {classification: $classification})-[:IS_CHILD {contentStreamId: $contentStreamId}]->(n)
-                RETURN childNode',
+                'MATCH (original:Node {aggregateId: $aggregateId})-[:IS_CHILD {contentStreamId: $contentStreamId}]->()
+                MATCH (n:Node {classification: $classification})-[rel:IS_CHILD {contentStreamId: $contentStreamId}]->(original)
+                RETURN n.aggregateId as aggregateId, n.nodeTypeName as nodeTypeName, n.name as name,
+                    n.classification as classification, n.originDimensionSpacePointHash as originDimensionSpacePointHash,
+                    n.created as created, n.originalCreated as originalCreated, n.lastModified as lastModified, n.originalLastModified as originalLastModified,
+                    n.properties as properties, rel.dimensionSpacePointHash as dimensionSpacePointHash',
                 [
                     'aggregateId' => $parentNodeAggregateId->value,
                     'contentStreamId' => $this->contentStreamId->value,
-                    'classification' => NodeAggregateClassification::CLASSIFICATION_TETHERED,
+                    'classification' => NodeAggregateClassification::CLASSIFICATION_TETHERED->value,
                 ],
             )
         );
+
+        if ($result->isEmpty()) {
+            return NodeAggregates::createEmpty();
+        }
 
         return $this->nodeFactory->mapResultToNodeAggregates($result, $this->workspaceName);
     }
@@ -360,18 +410,25 @@ class Neo4jContentGraph implements ContentGraphInterface
      */
     public function findNodeAggregatesTaggedBy(SubtreeTag $subtreeTag): NodeAggregates
     {
-        /** @var SummarizedResult $result */
         $result = $this->client->runStatement(
             Statement::create(
                 'MATCH (n:Node)-[rel:IS_CHILD {contentStreamId: $contentStreamId}]->()
                 WHERE $subtreeTag IN rel.subtreeTags
-                RETURN n',
+                RETURN n.aggregateId as aggregateId, n.nodeTypeName as nodeTypeName, n.name as name,
+                    n.classification as classification, n.originDimensionSpacePointHash as originDimensionSpacePointHash,
+                    n.created as created, n.originalCreated as originalCreated, n.lastModified as lastModified, n.originalLastModified as originalLastModified,
+                    n.properties as properties, rel.dimensionSpacePointHash as dimensionSpacePointHash',
                 [
                     'subtreeTag' => $subtreeTag->value,
                     'contentStreamId' => $this->getContentStreamId()->value,
                 ]
             )
         );
+
+        if ($result->isEmpty()) {
+            return NodeAggregates::createEmpty();
+        }
+
         return $this->nodeFactory->mapResultToNodeAggregates($result, $this->workspaceName);
     }
 

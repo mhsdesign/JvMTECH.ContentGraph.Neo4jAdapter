@@ -24,25 +24,27 @@ use Neos\EventStore\Model\Event\Version;
 class Neo4jContentGraphReadModelAdapter implements ContentGraphReadModelInterface
 {
     public function __construct(
-        private ClientInterface $client,
-        private ContentRepositoryId $contentRepositoryId,
-        private NodeFactory $nodeFactory,
-        private Neo4jDimensionSpacePointsRepository $dimensionSpacePointsRepository,
-        private NodeTypeManager $nodeTypeManager,
+        private readonly ClientInterface $client,
+        private readonly ContentRepositoryId $contentRepositoryId,
+        private readonly NodeFactory $nodeFactory,
+        private readonly Neo4jDimensionSpacePointsRepository $dimensionSpacePointsRepository,
+        private readonly NodeTypeManager $nodeTypeManager,
     )
     {
     }
 
     public function getContentGraph(WorkspaceName $workspaceName): ContentGraphInterface
     {
-        /** @var SummarizedResult $currentContentStreamIdResult */
-        $currentContentStreamIdResult = $this->client->runStatement(
+        $result = $this->client->runStatement(
             Statement::create(
                 'MATCH (:Workspace {name: $workspaceName})-[:CONTENT_STREAM]->(contentStream:ContentStream) RETURN contentStream.contentStreamId AS contentStreamId',
                 ['workspaceName' => $workspaceName->value]
             )
         );
-        $currentContentStreamId = ContentStreamId::fromString($currentContentStreamIdResult->getAsCypherMap(0)->getAsString('contentStreamId'));
+        if ($result->isEmpty()) {
+            throw new \RuntimeException(sprintf('No content stream found for workspace "%s".', $workspaceName->value), 1750171756);
+        }
+        $currentContentStreamId = ContentStreamId::fromString($result->getAsCypherMap(0)->getAsString('contentStreamId'));
         return new Neo4jContentGraph(
             $this->contentRepositoryId,
             $workspaceName,
@@ -56,7 +58,6 @@ class Neo4jContentGraphReadModelAdapter implements ContentGraphReadModelInterfac
 
     public function findContentStreamById(ContentStreamId $contentStreamId): ?ContentStream
     {
-        /** @var SummarizedResult $result */
         $result = $this->client->runStatement(
             Statement::create(
                 'MATCH (contentStream:ContentStream {contentStreamId: $contentStreamId})
@@ -65,6 +66,9 @@ class Neo4jContentGraphReadModelAdapter implements ContentGraphReadModelInterfac
                 ['contentStreamId' => $contentStreamId->value]
             )
         );
+        if (!$result->hasKey(0) || !$result->getAsCypherMap(0)->hasKey('contentStream')) {
+            return null;
+        }
         $properties = $result->getAsCypherMap(0)->getAsNode('contentStream')->getProperties();
         $sourceContentStreamProperties = null;
         if ($result->getAsCypherMap(0)->hasKey('sourceContentStream') && !empty($result->getAsCypherMap(0)->get('sourceContentStream'))) {
@@ -80,16 +84,17 @@ class Neo4jContentGraphReadModelAdapter implements ContentGraphReadModelInterfac
 
     public function countNodes(): int
     {
-        /** @var SummarizedResult $result */
         $result = $this->client->runStatement(
             Statement::create('MATCH (n:Node) RETURN count(n) AS nodeCount')
         );
+        if ($result->isEmpty()) {
+            return 0;
+        }
         return $result->getAsCypherMap(0)->getAsInt('nodeCount');
     }
 
     public function findWorkspaceByName(WorkspaceName $workspaceName): ?Workspace
     {
-        /** @var SummarizedResult $result */
         $result = $this->client->runStatement(
             Statement::create(
                 'MATCH (workspace:Workspace {name: $workspaceName})
@@ -121,7 +126,6 @@ class Neo4jContentGraphReadModelAdapter implements ContentGraphReadModelInterfac
 
     public function findWorkspaces(): Workspaces
     {
-        /** @var SummarizedResult $result */
         $result = $this->client->runStatement(
             Statement::create(
                 'MATCH (workspace:Workspace)-[:CONTENT_STREAM]->(contentStream:ContentStream)

@@ -253,7 +253,12 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
             array_filter(
                 array_map(
                     fn(CypherMap $map) => (
-                        $map->hasKey('otherSibling') ? $map->getAsNode('otherSibling') : null
+                        $map->hasKey('otherSibling') ? $this->nodeFactory->mapResultToNode(
+                            $map->getAsNode('otherSibling'),
+                            $this->workspaceName,
+                            $this->dimensionSpacePoint,
+                            $this->visibilityConstraints,
+                        ) : null
                     ),
                     $result->toArray()
                 )
@@ -278,7 +283,12 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
             array_filter(
                 array_map(
                     fn(CypherMap $map) => (
-                    $map->hasKey('otherSibling') ? $map->getAsNode('otherSibling') : null
+                    $map->hasKey('otherSibling') ? $this->nodeFactory->mapResultToNode(
+                        $map->getAsNode('otherSibling'),
+                        $this->workspaceName,
+                        $this->dimensionSpacePoint,
+                        $this->visibilityConstraints,
+                    ) : null
                     ),
                     $result->toArray()
                 )

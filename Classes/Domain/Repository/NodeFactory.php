@@ -245,8 +245,11 @@ final class NodeFactory
         try {
             $values = SerializedPropertyValues::fromJsonString($jsonString);
         } catch (\Exception $e) {
-            \Neos\Flow\var_dump($jsonString, $e->getMessage());
-            die();
+            throw new \InvalidArgumentException(
+                sprintf('Failed to parse properties JSON: %s', $e->getMessage()),
+                1750173736,
+                $e
+            );
         }
         return new PropertyCollection(
             SerializedPropertyValues::fromJsonString($jsonString),
