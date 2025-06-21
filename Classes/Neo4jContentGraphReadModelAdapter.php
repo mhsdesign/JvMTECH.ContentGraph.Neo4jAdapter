@@ -13,6 +13,7 @@ use Neos\ContentRepository\Core\NodeType\NodeTypeManager;
 use Neos\ContentRepository\Core\Projection\ContentGraph\ContentGraphInterface;
 use Neos\ContentRepository\Core\Projection\ContentGraph\ContentGraphReadModelInterface;
 use Neos\ContentRepository\Core\SharedModel\ContentRepository\ContentRepositoryId;
+use Neos\ContentRepository\Core\SharedModel\Exception\WorkspaceDoesNotExist;
 use Neos\ContentRepository\Core\SharedModel\Workspace\ContentStream;
 use Neos\ContentRepository\Core\SharedModel\Workspace\ContentStreamId;
 use Neos\ContentRepository\Core\SharedModel\Workspace\Workspace;
@@ -42,6 +43,7 @@ class Neo4jContentGraphReadModelAdapter implements ContentGraphReadModelInterfac
             )
         );
         if ($result->isEmpty()) {
+            throw WorkspaceDoesNotExist::butWasSupposedTo($workspaceName);
             throw new \RuntimeException(sprintf('No content stream found for workspace "%s".', $workspaceName->value), 1750171756);
         }
         $currentContentStreamId = ContentStreamId::fromString($result->getAsCypherMap(0)->getAsString('contentStreamId'));

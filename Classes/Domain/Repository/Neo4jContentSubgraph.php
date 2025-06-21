@@ -220,6 +220,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
                     $this->dimensionSpacePoint,
                     $childNodeAggregateId,
                 )
+            ->where('"Node" IN labels(p)')
             ->returns('p as parent')
             ->build()
         );
@@ -726,6 +727,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
         $query = $this->getReferencesQuery(false, $nodeAggregateId, $filter);
         $query->returns('target, ref');
         $result = $this->client->runStatement($query->build());
+
         return References::fromArray(array_map(fn(CypherMap $map) => (
             $this->nodeFactory->mapResultToReference(
                 $map->getAsNode('target'),
@@ -779,6 +781,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
         }
 
         $query->match('(source)-[:IS_CHILD {contentStreamId: $contentStreamId, dimensionSpacePointHash: $dimensionSpacePointHash}]->(:Node)');
+        $query->match('(target)-[:IS_CHILD {contentStreamId: $contentStreamId, dimensionSpacePointHash: $dimensionSpacePointHash}]->(:Node)');
         $query->matchNodeByAggregateId($aggregateId, 'source');
         $query->withParameters([
             'contentStreamId' => $this->contentStreamId->value,
@@ -831,7 +834,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
                     $query->orderBy('ref.'.$ordering->field->value, $ordering->direction->value);
                 }
             } elseif ($filter->referenceName === null) {
-                $query->orderBy('ref.name');
+                $query->orderBy('ref.referenceName');
             }
             $query->orderBy('ref.position')
                 ->orderBy('target.aggregateid');

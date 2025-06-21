@@ -168,7 +168,10 @@ trait HierarchyRelation
                     'childNodeAggregateId' => $childNode->getId(),
                     'contentStreamId' => $contentStreamId->value,
                     'dimensionSpacePointHash' => $dimensionSpacePoint->hash,
-                    'position' => Neo4jContentGraphProjection::RELATION_DEFAULT_OFFSET,
+                    'position' => $this->projectionContentGraph->determineRootNodePosition(
+                        $contentStreamId,
+                        $dimensionSpacePoint,
+                    ),
                     'lastModified' => $lastModified->format(\DateTimeInterface::ATOM),
                     'originalLastModified' => $originalLastModified->format(\DateTimeInterface::ATOM),
                 ]

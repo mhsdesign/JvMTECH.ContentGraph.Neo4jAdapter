@@ -221,7 +221,7 @@ final class NodeFactory
     ): ?Reference {
         $properties = null;
         try {
-            $properties = $relationship->getProperty('properties');
+            $properties = $relationship->getProperties()->hasKey('properties') ? $relationship->getProperties()->get('properties') : null;
         } catch (\Exception) {}
         return new Reference(
             $this->mapResultToNode(
@@ -231,10 +231,10 @@ final class NodeFactory
                 $visibilityConstraints
             ),
             ReferenceName::fromString($relationship->getProperty('referenceName')),
-            new PropertyCollection(
+            $properties ? new PropertyCollection(
                 SerializedPropertyValues::fromJsonString($properties ?: '{}'),
                 $this->propertyConverter,
-            ),
+            ) : null,
         );
     }
     /**
