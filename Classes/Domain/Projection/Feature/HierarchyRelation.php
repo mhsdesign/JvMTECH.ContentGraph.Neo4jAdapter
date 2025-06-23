@@ -33,7 +33,8 @@ trait HierarchyRelation
                     CREATE (childNode)-[:IS_CHILD {
                         contentStreamId: $contentStreamId,
                         dimensionSpacePointHash: $dimensionSpacePointHash,
-                        position: $position
+                        position: $position,
+                        subtreeTags: $subtreeTags
                     }]->(parentNode)
                     SET childNode.lastModified = $lastModified
                     SET childNode.originalLastModified = $originalLastModified',
@@ -43,6 +44,7 @@ trait HierarchyRelation
                     'contentStreamId' => $contentStreamId->value,
                     'dimensionSpacePointHash' => $dimensionSpacePoint->hash,
                     'position' => $position,
+                    'subtreeTags' => '{}',
                     'lastModified' => $lastModified->format(\DateTimeInterface::ATOM),
                     'originalLastModified' => $originalLastModified->format(\DateTimeInterface::ATOM),
                 ]

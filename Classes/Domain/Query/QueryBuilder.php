@@ -165,7 +165,7 @@ class QueryBuilder
     private function buildCypher(): string
     {
         $cypher = [];
-        $lastClause = null;
+        $lastClause = [];
 
         foreach ($this->clauses as $clause) {
             $type = $clause['type'];
@@ -174,11 +174,13 @@ class QueryBuilder
             if ($expression === '') {
                 $cypher[] = $type;
             } else {
-                if ($type === 'WHERE' && $lastClause['type'] === 'WHERE') {
-                    $type = 'AND';
-                }
-                if ($type === 'ORDER BY' && $lastClause['type'] === 'ORDER BY') {
-                    $type = ',';
+                if (array_key_exists('type', $lastClause)) {
+                    if ($type === 'WHERE' && $lastClause['type'] === 'WHERE') {
+                        $type = 'AND';
+                    }
+                    if ($type === 'ORDER BY' && $lastClause['type'] === 'ORDER BY') {
+                        $type = ',';
+                    }
                 }
                 $cypher[] = $type . ' ' . $expression;
             }
@@ -201,5 +203,19 @@ class QueryBuilder
     public function getClauses(): array
     {
         return $this->clauses;
+    }
+
+    /**
+     * @param callable(static): static $subClauses
+     * @param string $groupAlias
+     * @return self
+     */
+    public function whereAll(callable $subClauses, string $groupAlias = 'rels'): self
+    {
+        $statement = $subClauses(new QueryBuilder())->build();
+        $this
+            ->rawClause(sprintf('WHERE all(r IN %s %s)', $groupAlias, $statement->getText()))
+            ->withParameters($statement->getParameters());
+        return $this;
     }
 }

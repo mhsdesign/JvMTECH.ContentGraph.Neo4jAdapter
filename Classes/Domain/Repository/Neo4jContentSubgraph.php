@@ -4,11 +4,13 @@ declare(strict_types=1);
 namespace JvMTECH\ContentGraph\Neo4jAdapter\Domain\Repository;
 
 use JvMTECH\ContentGraph\Neo4jAdapter\Domain\Query\NodeQueryBuilder;
+use JvMTECH\ContentGraph\Neo4jAdapter\Domain\Query\QueryBuilder;
 use Laudis\Neo4j\Contracts\ClientInterface;
 use Laudis\Neo4j\Databags\Statement;
 use Laudis\Neo4j\Databags\SummarizedResult;
 use Laudis\Neo4j\Types\CypherMap;
 use Neos\ContentRepository\Core\DimensionSpace\DimensionSpacePoint;
+use Neos\ContentRepository\Core\Feature\SubtreeTagging\Dto\SubtreeTags;
 use Neos\ContentRepository\Core\NodeType\NodeTypeManager;
 use Neos\ContentRepository\Core\NodeType\NodeTypeName;
 use Neos\ContentRepository\Core\Projection\ContentGraph\AbsoluteNodePath;
@@ -73,6 +75,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
                     $this->dimensionSpacePoint,
                     $nodeAggregateId,
                 )
+                ->withVisibilityConstraints($this->visibilityConstraints)
                 ->returns('n')
                 ->build()
         );
@@ -169,6 +172,13 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
                 $parentNodeAggregateId,
                 parentAlias: '',
             );
+        /** @var SubtreeTags $constraint */
+        foreach ($this->visibilityConstraints as $constraint) {
+            foreach ($constraint as $subtreeTag) {
+                $query->with(sprintf('child, rel, COALESCE(apoc.convert.fromJsonMap(rel.subtreeTags).%s, false) AS %s', $subtreeTag->value, $subtreeTag->value));
+                $query->where(sprintf('%s <> true', $subtreeTag->value));
+            }
+        }
 
         if (!empty($filter->nodeTypes)) {
             $expandedNodeTypeCriteria = ExpandedNodeTypeCriteria::create($filter->nodeTypes, $this->nodeTypeManager);
@@ -308,6 +318,13 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
                 $siblingNodeAggregateId,
             )
             ->match('(p)<-[otherSiblingRel:IS_CHILD {contentStreamId: $contentStreamId, dimensionSpacePointHash: $dimensionSpacePointHash}]-(otherSibling:Node)');
+
+        foreach ($this->visibilityConstraints as $constraint) {
+            foreach ($constraint as $subtreeTag) {
+                $query->where(sprintf('COALESCE(apoc.convert.fromJsonMap(otherSiblingRel.subtreeTags).%s, false) <> true', $subtreeTag->value));
+            }
+        }
+
         if ($filter instanceof Filter\FindSucceedingSiblingNodesFilter) {
             $query
                 ->where('otherSiblingRel.position > rel.position')
@@ -344,20 +361,20 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
                     ->withParameters($propertyParams);
             }
         }
-            if ($filter->ordering !== null) {
-                foreach ($filter->ordering as $ordering) {
-                    $query->orderBy('ref.' . $ordering->field->value, $ordering->direction->value);
-                }
+        if ($filter->ordering !== null) {
+            foreach ($filter->ordering as $ordering) {
+                $query->orderBy('ref.' . $ordering->field->value, $ordering->direction->value);
             }
+        }
+        $query
+            ->orderBy('otherSiblingRel.position')
+            ->orderBy('otherSibling.aggregateid');
+        if ($filter->pagination !== null) {
             $query
-                ->orderBy('otherSiblingRel.position')
-                ->orderBy('otherSibling.aggregateid');
-            if ($filter->pagination !== null) {
-                $query
-                    ->limit($filter->pagination->limit)
-                    ->skip($filter->pagination->offset);
-            }
-            $query->returns('DISTINCT otherSibling');
+                ->limit($filter->pagination->limit)
+                ->skip($filter->pagination->offset);
+        }
+        $query->returns('DISTINCT otherSibling');
         return $query;
     }
 
@@ -528,7 +545,6 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function countDescendantNodes(NodeAggregateId $entryNodeAggregateId, Filter\CountDescendantNodesFilter $filter): int
     {
-
         $result = $this->client->runStatement(
             Statement::create(
                 'MATCH (:Node {aggregateId: $aggregateId})<-[:IS_CHILD*1.. {contentStreamId: $contentStreamId, dimensionSpacePointHash: $dimensionSpacePointHash}]-(descendant:Node) RETURN count(DISTINCT descendant) as count',
@@ -555,8 +571,23 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
                 $this->dimensionSpacePoint,
                 $entryNodeAggregateId,
             )
-            ->match(sprintf('path = (n:Node)<-[rels:IS_CHILD*0..%d]-(descendant)', $maxLevels))
-            ->where('all(r IN rels WHERE r.contentStreamId = $contentStreamId AND r.dimensionSpacePointHash = $dimensionSpacePointHash)');
+            ->match(sprintf('path = (n:Node)<-[rels:IS_CHILD*0..%d]-(descendant)', $maxLevels));
+
+        $query->whereAll(
+            function(QueryBuilder $qb) {
+                $qb
+                    ->where('r.contentStreamId = $contentStreamId')
+                    ->withParameter('contentStreamId', $this->contentStreamId->value)
+                    ->where('r.dimensionSpacePointHash = $dimensionSpacePointHash')
+                    ->withParameter('dimensionSpacePointHash', $this->dimensionSpacePoint->hash);
+                foreach ($this->visibilityConstraints as $constraint) {
+                    foreach ($constraint as $subtreeTag) {
+                        $qb->where(sprintf('COALESCE(apoc.convert.fromJsonMap(r.subtreeTags).%s, false) <> true', $subtreeTag->value));
+                    }
+                }
+                return $qb;
+            },
+        );
 
         if (!empty($filter->nodeTypes)) {
             $expandedNodeTypeCriteria = ExpandedNodeTypeCriteria::create($filter->nodeTypes, $this->nodeTypeManager);
@@ -723,7 +754,6 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function findReferences(NodeAggregateId $nodeAggregateId, Filter\FindReferencesFilter $filter): References
     {
-
         $query = $this->getReferencesQuery(false, $nodeAggregateId, $filter);
         $query->returns('target, ref');
         $result = $this->client->runStatement($query->build());
@@ -778,6 +808,15 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
             $query->match('(target:Node)-[ref:REFERENCE]->(source:Node)');
         } else {
             $query->match('(source:Node)-[ref:REFERENCE]->(target:Node)');
+        }
+        $query->match('(source)-[sourceChild:IS_CHILD {contentStreamId: $contentStreamId, dimensionSpacePointHash: $dimensionSpacePointHash}]->(:Node)');
+        $query->match('(target)-[targetChild:IS_CHILD {contentStreamId: $contentStreamId, dimensionSpacePointHash: $dimensionSpacePointHash}]->(:Node)');
+
+        foreach ($this->visibilityConstraints as $constraint) {
+            foreach ($constraint as $subtreeTag) {
+                $query->where(sprintf('COALESCE(apoc.convert.fromJsonMap(sourceChild.subtreeTags).%s, false) <> true', $subtreeTag->value));
+                $query->where(sprintf('COALESCE(apoc.convert.fromJsonMap(targetChild.subtreeTags).%s, false) <> true', $subtreeTag->value));
+            }
         }
 
         $query->match('(source)-[:IS_CHILD {contentStreamId: $contentStreamId, dimensionSpacePointHash: $dimensionSpacePointHash}]->(:Node)');
@@ -848,8 +887,6 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function findNodeByPath(NodeName|NodePath $path, NodeAggregateId $startingNodeAggregateId): ?Node
     {
-
-        /** @var NodePath $path */
         $path = $path instanceof NodeName ? NodePath::fromNodeNames($path) : $path;
 
         return $this->findNodeByPathFromStartingNode($path, $startingNodeAggregateId);
@@ -857,7 +894,6 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function findNodeByAbsolutePath(AbsoluteNodePath $path): ?Node
     {
-
         $startingNode = $this->findRootNodeByType($path->rootNodeTypeName);
 
         return $startingNode
@@ -867,34 +903,48 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     private function findNodeByPathFromStartingNode(NodePath $path, Node|NodeAggregateId $startingNode): ?Node
     {
+        $query = NodeQueryBuilder::createForNodes()
+            ->matchNodeForSubgraph(
+                $this->contentStreamId,
+                $this->dimensionSpacePoint,
+                $startingNode,
+                nodeAlias: 'startingNode',
+            );
 
-        $statement = 'MATCH p = (:Node {aggregateId: $startingNodeAggregateId})';
+        $query->rawClause('MATCH path = ');
+        $lastNodeAlias = 'startingNode';
+        $highestIndex = -1;
         foreach ($path->getParts() as $part) {
             if ($part->value === 'sites') continue;
-            $statement .= sprintf(
-                '<-[:IS_CHILD {contentStreamId: $contentStreamId, dimensionSpacePointHash: $dimensionSpacePointHash}]-(:Node {name: "%s"})',
-                $part->value
-            );
-        }
-        $statement .= ' RETURN p';
+            $highestIndex++;
+            if ($highestIndex === 0) {
+                $query->rawClause(sprintf('(%s)<-[childRel%s]-(childNode%s)', $lastNodeAlias, $highestIndex, $highestIndex));
+            } else {
+                $query->match(sprintf('(%s)<-[childRel%s]-(childNode%s)', $lastNodeAlias, $highestIndex, $highestIndex));
+            }
+            $query
+                ->where(sprintf('childNode%s.name = $name%s', $highestIndex, $highestIndex))
+                ->withParameter('name' . $highestIndex, $part->value)
+                ->where(sprintf('childRel%s.contentStreamId = $contentStreamId', $highestIndex))
+                ->where(sprintf('childRel%s.dimensionSpacePointHash = $dimensionSpacePointHash', $highestIndex));
+            foreach ($this->visibilityConstraints as $constraint) {
+                foreach ($constraint as $subtreeTag) {
+                    $query->where(sprintf('COALESCE(apoc.convert.fromJsonMap(childRel%s.subtreeTags).%s, false) <> true', $highestIndex, $subtreeTag->value));
+                }
+            }
 
-        /** @var SummarizedResult $result */
-        $result = $this->client->runStatement(
-            Statement::create($statement, [
-                'startingNodeAggregateId' => $startingNode instanceof NodeAggregateId ? $startingNode->value : $startingNode->aggregateId->value,
-                'contentStreamId' => $this->contentStreamId->value,
-                'dimensionSpacePointHash' => $this->dimensionSpacePoint->hash,
-            ])
-        );
+            $lastNodeAlias = sprintf('childNode%s', $highestIndex);
+        }
+        $query->returns(sprintf('childNode%s as node', $highestIndex));
+
+        $result = $this->client->runStatement($query->build());
 
         if ($result->isEmpty() || !$result->hasKey(0)) {
             return null;
         }
 
-        $path = $result->getAsCypherMap(0)->getAsPath('p');
-
         return $this->nodeFactory->mapResultToNode(
-            $path->getNodes()->reversed()->first(),
+            $result->getAsCypherMap(0)->getAsNode('node'),
             $this->workspaceName,
             $this->dimensionSpacePoint,
             $this->visibilityConstraints,
@@ -903,14 +953,12 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function retrieveNodePath(NodeAggregateId $nodeAggregateId): AbsoluteNodePath
     {
-
         // TODO: Implement retrieveNodePath() method.
         throw new \RuntimeException('Not implemented yet');
     }
 
     public function countNodes(): int
     {
-
         /** @var SummarizedResult $result */
         $result = $this->client->runStatement(
             Statement::create(

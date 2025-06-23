@@ -11,6 +11,8 @@ use Neos\ContentRepository\Core\DimensionSpace\DimensionSpacePointSet;
 use Neos\ContentRepository\Core\DimensionSpace\OriginDimensionSpacePoint;
 use Neos\ContentRepository\Core\DimensionSpace\OriginDimensionSpacePointSet;
 use Neos\ContentRepository\Core\Feature\NodeModification\Dto\SerializedPropertyValues;
+use Neos\ContentRepository\Core\Feature\SubtreeTagging\Dto\SubtreeTag;
+use Neos\ContentRepository\Core\Feature\SubtreeTagging\Dto\SubtreeTags;
 use Neos\ContentRepository\Core\Infrastructure\Property\PropertyConverter;
 use Neos\ContentRepository\Core\NodeType\NodeTypeName;
 use Neos\ContentRepository\Core\Projection\ContentGraph\CoverageByOrigin;
@@ -30,6 +32,7 @@ use Neos\ContentRepository\Core\SharedModel\Node\NodeAggregateId;
 use Neos\ContentRepository\Core\SharedModel\Node\NodeName;
 use Neos\ContentRepository\Core\SharedModel\Node\ReferenceName;
 use Neos\ContentRepository\Core\SharedModel\Workspace\WorkspaceName;
+use Neos\Neos\Domain\SubtreeTagging\NeosSubtreeTag;
 
 /**
  * Factory for creating NodeAggregate objects from Neo4j query results
@@ -67,7 +70,7 @@ final class NodeFactory
         }
 
         $nodeAggregates = [];
-        foreach ($recordsByNodeAggregateId as $nodeAggregateId => $records) {
+        foreach ($recordsByNodeAggregateId as $records) {
             $nodeAggregate = $this->createNodeAggregateFromRecords($records, $workspaceName);
             if ($nodeAggregate !== null) {
                 $nodeAggregates[] = $nodeAggregate;
@@ -88,13 +91,7 @@ final class NodeFactory
             return null;
         }
 
-        // Convert all records to array and create a single NodeAggregate
-        $records = [];
-        foreach ($result as $record) {
-            $records[] = $record;
-        }
-
-        return $this->createNodeAggregateFromRecords($records, $workspaceName);
+        return $this->createNodeAggregateFromRecords($result->toArray(), $workspaceName);
     }
 
     /**
@@ -146,7 +143,7 @@ final class NodeFactory
             // Build coverage mappings
             $coverageByOccupants[$originDimensionSpacePoint->hash][$coveredDimensionSpacePoint->hash] = $coveredDimensionSpacePoint;
             $occupationByCovering[$coveredDimensionSpacePoint->hash] = $originDimensionSpacePoint;
-            $nodeTagsByCoveredDimensionSpacePoint[$coveredDimensionSpacePoint->hash] = NodeTags::createEmpty();
+            $nodeTagsByCoveredDimensionSpacePoint[$coveredDimensionSpacePoint->hash] = self::extractNodeTagsFromJson($record->get('subtreeTags') ?: '{}');
         }
 
         return NodeAggregate::create(
@@ -301,5 +298,27 @@ final class NodeFactory
     private function resolveCoveredDimensionSpacePointFromHash(?string $hash): DimensionSpacePoint
     {
         return $this->dimensionSpacePointsRepository->getOriginDimensionSpacePointByHash($hash)->toDimensionSpacePoint();
+    }
+
+    public static function extractNodeTagsFromJson(string $subtreeTagsJson): NodeTags
+    {
+        $explicitTags = [];
+        $inheritedTags = [];
+        try {
+            $subtreeTagsArray = json_decode($subtreeTagsJson, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $e) {
+            throw new \RuntimeException(sprintf('Failed to JSON-decode subtree tags from JSON string %s: %s', $subtreeTagsJson, $e->getMessage()), 1716476904, $e);
+        }
+        foreach ($subtreeTagsArray as $tagValue => $explicit) {
+            if ($explicit) {
+                $explicitTags[] = $tagValue;
+            } else {
+                $inheritedTags[] = $tagValue;
+            }
+        }
+        return NodeTags::create(
+            tags: SubtreeTags::fromStrings(...$explicitTags),
+            inheritedTags: SubtreeTags::fromStrings(...$inheritedTags)
+        );
     }
 }

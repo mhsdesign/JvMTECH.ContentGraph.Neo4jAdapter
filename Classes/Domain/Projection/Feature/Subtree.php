@@ -18,9 +18,7 @@ trait Subtree
 
     private function addSubtreeTag(ContentStreamId $contentStreamId, NodeAggregateId $nodeAggregateId, DimensionSpacePointSet $affectedDimensionSpacePoints, SubtreeTag $tag): void
     {
-
         $affectedDimensionSpacePointHashes = $affectedDimensionSpacePoints->getPointHashes();
-        /** @var SummarizedResult $currentRelationships */
         $currentRelationships = $this->client->runStatement(
             Statement::create(
                 'MATCH (:Node {aggregateId: $aggregateId})-[rel:IS_CHILD|IS_ROOT {contentStreamId: $contentStreamId}]->()
@@ -38,18 +36,18 @@ trait Subtree
             $relationshipDimensionSpacePointHash = $relationship->getProperty('dimensionSpacePointHash');
             $currentSubtreeTags = [];
             if ($relationship->getProperties()->hasKey('subtreeTags')) {
-                $currentSubtreeTags = $relationship->getProperty('subtreeTags')->toArray();
+                $currentSubtreeTags = json_decode($relationship->getProperty('subtreeTags') ?: '{}', true);
             }
             $relationshipId = $relationship->getId();
             if (in_array($relationshipDimensionSpacePointHash, $affectedDimensionSpacePointHashes)) {
-                $currentSubtreeTags[] = $tag->value;
+                $currentSubtreeTags[$tag->value] = true;
                 $this->client->runStatement(
                     Statement::create('MATCH ()-[rel:IS_CHILD|IS_ROOT]->()
                         WHERE id(rel) = $relationshipId
                         SET rel.subtreeTags = $subtreeTags',
                         [
                             'relationshipId' => $relationshipId,
-                            'subtreeTags' => $currentSubtreeTags,
+                            'subtreeTags' => json_encode($currentSubtreeTags),
                         ],
                     )
                 );

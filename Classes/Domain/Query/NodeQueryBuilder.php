@@ -5,6 +5,7 @@ namespace JvMTECH\ContentGraph\Neo4jAdapter\Domain\Query;
 
 use Laudis\Neo4j\Types\Node;
 use Neos\ContentRepository\Core\NodeType\NodeTypeNames;
+use Neos\ContentRepository\Core\Projection\ContentGraph\VisibilityConstraints;
 use Neos\ContentRepository\Core\SharedModel\Node\NodeAggregateId;
 use Neos\ContentRepository\Core\SharedModel\Workspace\ContentStreamId;
 use Neos\ContentRepository\Core\NodeType\NodeTypeName;
@@ -49,6 +50,40 @@ final class NodeQueryBuilder extends QueryBuilder
            )
            ->withParameter('contentStreamId', $contentStreamId->value)
            ->withParameter('dimensionSpacePointHash', $dimensionSpacePoint->hash);
+    }
+
+    public function withVisibilityConstraints(
+        VisibilityConstraints $visibilityConstraints,
+        string $relationAlias= 'rel',
+    ): self
+    {
+        foreach ($visibilityConstraints as $constraint) {
+            foreach ($constraint as $subtreeTag) {
+                $this->where(sprintf('COALESCE(apoc.convert.fromJsonMap(%s.subtreeTags).%s, false) <> true', $relationAlias, $subtreeTag->value));
+            }
+        }
+        return $this;
+    }
+
+    public function matchNodeForContentStream(
+        ContentStreamId $contentStreamId,
+        NodeAggregateId $nodeAggregateId,
+        string $nodeAlias = 'n',
+        string $relationAlias = 'rel'
+    ): self
+    {
+        return $this->match("({$nodeAlias}:Node {aggregateId: \$aggregateId})-[{$relationAlias}:IS_CHILD {contentStreamId: \$contentStreamId}]->()")
+            ->withParameter('aggregateId', $nodeAggregateId->value)
+            ->withParameter('contentStreamId', $contentStreamId->value);
+    }
+
+    public function matchNodesForContentStream(
+        ContentStreamId $contentStreamId,
+        string $nodeAlias = 'n',
+        string $relationAlias = 'rel'
+    ): self {
+        return $this->match("({$nodeAlias}:Node)-[{$relationAlias}:IS_CHILD {contentStreamId: \$contentStreamId}]->(:Node|Root)")
+            ->withParameter('contentStreamId', $contentStreamId->value);
     }
 
     public function matchChildrenForSubgraph(
@@ -123,7 +158,7 @@ final class NodeQueryBuilder extends QueryBuilder
                    ->withParameter('contentStreamId', $contentStreamId->value);
     }
 
-    public function matchNodeInDimensionSpace(
+    public function whereNodeInDimensionSpace(
         string $dimensionSpacePointHash,
         string $relationAlias = 'rel'
     ): self {
@@ -146,9 +181,11 @@ final class NodeQueryBuilder extends QueryBuilder
             "{$nodeAlias}.properties as properties, " .
             "{$relationAlias}.dimensionSpacePointHash as dimensionSpacePointHash, " .
             "{$relationAlias}.contentStreamId as contentStreamId, " .
-            "{$relationAlias}.position as position"
+            "{$relationAlias}.position as position, " .
+            "{$relationAlias}.subtreeTags as subtreeTags"
         );
     }
+
 
     public function whereNodeTypeIn(NodeTypeNames|array $nodeTypeNames, string $nodeAlias = 'n', string $parameterAlias = 'allowedNodeTypes', bool $negate = false): self
     {
