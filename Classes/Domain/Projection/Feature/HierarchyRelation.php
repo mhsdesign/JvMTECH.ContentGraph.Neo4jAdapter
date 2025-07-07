@@ -29,12 +29,25 @@ trait HierarchyRelation
         $this->client->runStatement(
             Statement::create(
                 'MATCH (childNode:Node) WHERE ID(childNode) = $childNodeAggregateId
-                    MATCH (parentNode:Node|Root {aggregateId: $parentNodeAggregateId})-[:IS_CHILD {contentStreamId: $contentStreamId, dimensionSpacePointHash: $dimensionSpacePointHash}]->()
+                    MATCH (parentNode:Node|Root {aggregateId: $parentNodeAggregateId})-[parentRel:IS_CHILD {contentStreamId: $contentStreamId, dimensionSpacePointHash: $dimensionSpacePointHash}]->()
+                    
+                    // Get parent subtree tags and convert them to inherited tags for the child
+                    WITH childNode, parentNode, parentRel,
+                         CASE WHEN parentRel.subtreeTags IS NOT NULL 
+                              THEN apoc.convert.fromJsonMap(parentRel.subtreeTags) 
+                              ELSE {} END as parentTags
+                    
+                    // Convert parent tags to inherited tags for child (true -> inherit, inherit -> inherit)
+                    WITH childNode, parentNode, parentRel, parentTags,
+                         apoc.map.fromPairs([key in keys(parentTags) WHERE parentTags[key] IN [true, "inherit"] | [key, "inherit"]]) as inheritedTags
+                    
                     CREATE (childNode)-[:IS_CHILD {
                         contentStreamId: $contentStreamId,
                         dimensionSpacePointHash: $dimensionSpacePointHash,
                         position: $position,
-                        subtreeTags: $subtreeTags
+                        subtreeTags: CASE WHEN size(keys(inheritedTags)) > 0 
+                                          THEN apoc.convert.toJson(inheritedTags)
+                                          ELSE null END
                     }]->(parentNode)
                     SET childNode.lastModified = $lastModified
                     SET childNode.originalLastModified = $originalLastModified',
@@ -44,7 +57,6 @@ trait HierarchyRelation
                     'contentStreamId' => $contentStreamId->value,
                     'dimensionSpacePointHash' => $dimensionSpacePoint->hash,
                     'position' => $position,
-                    'subtreeTags' => '{}',
                     'lastModified' => $lastModified->format(\DateTimeInterface::ATOM),
                     'originalLastModified' => $originalLastModified->format(\DateTimeInterface::ATOM),
                 ]
@@ -78,6 +90,7 @@ trait HierarchyRelation
         Node $newParentNode,
         DimensionSpacePoint $dimensionSpacePoint,
         int $position,
+        bool $copyDisabledState = true,
     ): void
     {
         $this->client->runStatement(
@@ -92,7 +105,12 @@ trait HierarchyRelation
                     position: $position
                 }]->(newParentNode)
                 FOREACH (_ IN CASE WHEN rOld.subtreeTags IS NOT NULL AND $copySubtreeTags = TRUE THEN [1] ELSE [] END |
-                    SET rNew.subtreeTags = rOld.subtreeTags
+                    // Copy subtree tags conditionally based on copyDisabledState parameter
+                    SET rNew.subtreeTags = CASE WHEN $copyDisabledState = TRUE 
+                                                THEN rOld.subtreeTags
+                                                ELSE CASE WHEN size(keys(apoc.map.removeKey(apoc.convert.fromJsonMap(rOld.subtreeTags), "disabled"))) > 0
+                                                          THEN apoc.convert.toJson(apoc.map.removeKey(apoc.convert.fromJsonMap(rOld.subtreeTags), "disabled"))
+                                                          ELSE null END END
                 )',
                 [
                     'relationshipId' => $relationship->getId(),
@@ -100,7 +118,8 @@ trait HierarchyRelation
                     'newParentNodeId' => $newParentNode->getId(),
                     'position' => $position,
                     'dimensionSpacePointHash' => $dimensionSpacePoint->hash,
-                    'copySubtreeTags' => false,
+                    'copySubtreeTags' => true,
+                    'copyDisabledState' => $copyDisabledState,
                 ]
             )
         );

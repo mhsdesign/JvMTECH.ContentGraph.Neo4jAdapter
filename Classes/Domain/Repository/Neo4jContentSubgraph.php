@@ -30,6 +30,7 @@ use Neos\ContentRepository\Core\SharedModel\Node\NodeAggregateIds;
 use Neos\ContentRepository\Core\SharedModel\Node\NodeName;
 use Neos\ContentRepository\Core\SharedModel\Workspace\ContentStreamId;
 use Neos\ContentRepository\Core\SharedModel\Workspace\WorkspaceName;
+use org\bovigo\vfs\vfsStreamResolveIncludePathTestCase;
 
 class Neo4jContentSubgraph implements ContentSubgraphInterface
 {

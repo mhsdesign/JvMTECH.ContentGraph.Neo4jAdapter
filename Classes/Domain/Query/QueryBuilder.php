@@ -214,7 +214,7 @@ class QueryBuilder
     {
         $statement = $subClauses(new QueryBuilder())->build();
         $this
-            ->rawClause(sprintf('WHERE all(r IN %s %s)', $groupAlias, $statement->getText()))
+            ->where(sprintf('all(r IN %s %s)', $groupAlias, $statement->getText()))
             ->withParameters($statement->getParameters());
         return $this;
     }

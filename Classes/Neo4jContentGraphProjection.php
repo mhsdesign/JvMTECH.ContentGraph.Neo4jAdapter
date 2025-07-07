@@ -874,6 +874,7 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
                         contentStreamId: $event->contentStreamId,
                         dimensionSpacePoint: $unassignedIngoingDimensionSpacePoint
                     ),
+                    copyDisabledState: false,
                 );
             }
         }

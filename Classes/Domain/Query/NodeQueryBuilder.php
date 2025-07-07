@@ -59,7 +59,7 @@ final class NodeQueryBuilder extends QueryBuilder
     {
         foreach ($visibilityConstraints as $constraint) {
             foreach ($constraint as $subtreeTag) {
-                $this->where(sprintf('COALESCE(apoc.convert.fromJsonMap(%s.subtreeTags).%s, false) <> true', $relationAlias, $subtreeTag->value));
+                $this->where(sprintf('COALESCE(apoc.convert.fromJsonMap(%s.subtreeTags).%s, false) = false', $relationAlias, $subtreeTag->value));
             }
         }
         return $this;
