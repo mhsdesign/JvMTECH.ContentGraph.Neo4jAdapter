@@ -14,6 +14,7 @@ class Neo4jProjectionContentGraph
 {
     public function __construct(
         private readonly ClientInterface $client,
+        private bool $debug = false,
     ) {
     }
 
@@ -22,8 +23,9 @@ class Neo4jProjectionContentGraph
         ?NodeAggregateId $succeedingSiblingAggregateId,
         ContentStreamId $contentStreamId,
         DimensionSpacePoint $dimensionSpacePoint,
+        ?NodeAggregateId $childAggregateId = null,
     ): int {
-        if (!$parentAggregateId && !$succeedingSiblingAggregateId) {
+        if (!$parentAggregateId && !$childAggregateId) {
             throw new \InvalidArgumentException(
                 'You must specify either parent or child node anchor to determine a hierarchy relation position',
                 1519847447

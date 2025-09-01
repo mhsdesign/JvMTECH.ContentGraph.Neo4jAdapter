@@ -99,19 +99,37 @@ trait HierarchyRelation
                 MATCH (newChildNode:Node)
                 MATCH (newParentNode:Node)
                 WHERE ID(newChildNode) = $newChildNodeId AND ID(newParentNode) = $newParentNodeId
+                
+                // Find parent node\'s relationship for tag inheritance using the same contentStreamId and dimensionSpacePointHash
+                OPTIONAL MATCH (newParentNode)-[parentRel:IS_CHILD {contentStreamId: rOld.contentStreamId, dimensionSpacePointHash: $dimensionSpacePointHash}]->()
+                
+                // Get parent subtree tags and convert them to inherited tags for the child
+                WITH rOld, newChildNode, newParentNode, parentRel,
+                     CASE WHEN parentRel.subtreeTags IS NOT NULL 
+                          THEN apoc.convert.fromJsonMap(parentRel.subtreeTags) 
+                          ELSE {} END as parentTags,
+                     CASE WHEN rOld.subtreeTags IS NOT NULL AND $copySubtreeTags = TRUE
+                          THEN apoc.convert.fromJsonMap(rOld.subtreeTags)
+                          ELSE {} END as oldTags
+                
+                // Convert parent tags to inherited tags for child (true -> inherit, inherit -> inherit)
+                WITH rOld, newChildNode, newParentNode, parentTags, oldTags,
+                     apoc.map.fromPairs([key in keys(parentTags) WHERE parentTags[key] IN [true, "inherit"] | [key, "inherit"]]) as inheritedTags
+                
+                // Merge inherited tags with old tags, with old tags taking precedence
+                WITH rOld, newChildNode, newParentNode, inheritedTags, oldTags,
+                     apoc.map.merge(inheritedTags, CASE WHEN $copyDisabledState = TRUE 
+                                                        THEN oldTags
+                                                        ELSE apoc.map.removeKey(oldTags, "disabled") END) as finalTags
+                
                 CREATE (newChildNode)-[rNew:IS_CHILD {
                     contentStreamId: rOld.contentStreamId,
                     dimensionSpacePointHash: $dimensionSpacePointHash,
-                    position: $position
-                }]->(newParentNode)
-                FOREACH (_ IN CASE WHEN rOld.subtreeTags IS NOT NULL AND $copySubtreeTags = TRUE THEN [1] ELSE [] END |
-                    // Copy subtree tags conditionally based on copyDisabledState parameter
-                    SET rNew.subtreeTags = CASE WHEN $copyDisabledState = TRUE 
-                                                THEN rOld.subtreeTags
-                                                ELSE CASE WHEN size(keys(apoc.map.removeKey(apoc.convert.fromJsonMap(rOld.subtreeTags), "disabled"))) > 0
-                                                          THEN apoc.convert.toJson(apoc.map.removeKey(apoc.convert.fromJsonMap(rOld.subtreeTags), "disabled"))
-                                                          ELSE null END END
-                )',
+                    position: $position,
+                    subtreeTags: CASE WHEN size(keys(finalTags)) > 0 
+                                      THEN apoc.convert.toJson(finalTags)
+                                      ELSE null END
+                }]->(newParentNode)',
                 [
                     'relationshipId' => $relationship->getId(),
                     'newChildNodeId' => $newChildNode->getId(),
@@ -129,19 +147,47 @@ trait HierarchyRelation
         Node $newChildNode,
         Relationship $relationship,
         int $position,
+        bool $copyDisabledState = true,
     ): void
     {
         $this->client->runStatement(
             Statement::create(
                 'MATCH (newChildNode:Node) WHERE ID(newChildNode) = $newChildNodeId
-                MATCH ()-[relationship]->() WHERE ID(relationship) = $relationshipId
+                MATCH ()-[relationship]->(parentNode) WHERE ID(relationship) = $relationshipId
+                
+                // Find parent node\'s relationship for tag inheritance using the same contentStreamId and dimensionSpacePointHash
+                OPTIONAL MATCH (parentNode)-[parentRel:IS_CHILD {contentStreamId: relationship.contentStreamId, dimensionSpacePointHash: relationship.dimensionSpacePointHash}]->()
+                
+                // Get parent subtree tags and existing relationship tags
+                WITH newChildNode, relationship, parentNode, parentRel,
+                     CASE WHEN parentRel.subtreeTags IS NOT NULL 
+                          THEN apoc.convert.fromJsonMap(parentRel.subtreeTags) 
+                          ELSE {} END as parentTags,
+                     CASE WHEN relationship.subtreeTags IS NOT NULL 
+                          THEN apoc.convert.fromJsonMap(relationship.subtreeTags) 
+                          ELSE {} END as existingTags
+                
+                // Convert parent tags to inherited tags for child (true -> inherit, inherit -> inherit)
+                WITH newChildNode, relationship, parentNode, parentTags, existingTags,
+                     apoc.map.fromPairs([key in keys(parentTags) WHERE parentTags[key] IN [true, "inherit"] | [key, "inherit"]]) as inheritedTags
+                
+                // Merge inherited tags with existing tags, with existing tags taking precedence
+                WITH newChildNode, relationship, inheritedTags, existingTags,
+                     apoc.map.merge(inheritedTags, CASE WHEN $copyDisabledState = TRUE 
+                                                        THEN existingTags
+                                                        ELSE apoc.map.removeKey(existingTags, "disabled") END) as finalTags
+                
                 CALL apoc.refactor.from(relationship, newChildNode)
                 YIELD output as newRelationship
-                SET newRelationship.position = $position',
+                SET newRelationship.position = $position,
+                    newRelationship.subtreeTags = CASE WHEN size(keys(finalTags)) > 0 
+                                                        THEN apoc.convert.toJson(finalTags)
+                                                        ELSE null END',
                 [
                     'newChildNodeId' => $newChildNode->getId(),
                     'relationshipId' => $relationship->getId(),
                     'position' => $position,
+                    'copyDisabledState' => $copyDisabledState,
                 ]
             )
         );

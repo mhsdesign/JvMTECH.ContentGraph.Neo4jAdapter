@@ -8,7 +8,6 @@ use Laudis\Neo4j\Databags\Statement;
 use Laudis\Neo4j\Types\Node;
 use Neos\ContentRepository\Core\DimensionSpace\DimensionSpacePoint;
 use Neos\ContentRepository\Core\Feature\NodeReferencing\Dto\SerializedNodeReferences;
-
 use Neos\ContentRepository\Core\SharedModel\Node\NodeAggregateId;
 use Neos\ContentRepository\Core\SharedModel\Node\ReferenceName;
 use Neos\ContentRepository\Core\SharedModel\Workspace\ContentStreamId;
@@ -96,10 +95,7 @@ trait ReferenceRelation
         }
     }
 
-    private function copyReferenceRelations(
-        Node $sourceNode,
-        Node $targetNode,
-    ): void
+    private function copyReferenceRelations(Node $sourceNode, Node $targetNode): void
     {
         $this->client->runStatement(
             Statement::create(

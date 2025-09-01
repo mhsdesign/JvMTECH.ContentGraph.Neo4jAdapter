@@ -30,7 +30,6 @@ use Neos\ContentRepository\Core\SharedModel\Node\NodeAggregateIds;
 use Neos\ContentRepository\Core\SharedModel\Node\NodeName;
 use Neos\ContentRepository\Core\SharedModel\Workspace\ContentStreamId;
 use Neos\ContentRepository\Core\SharedModel\Workspace\WorkspaceName;
-use org\bovigo\vfs\vfsStreamResolveIncludePathTestCase;
 
 class Neo4jContentSubgraph implements ContentSubgraphInterface
 {
@@ -43,32 +42,38 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
         private readonly ClientInterface $client,
         private readonly NodeFactory $nodeFactory,
         private readonly NodeTypeManager $nodeTypeManager,
+        private readonly bool $debug = false,
     )
     {
     }
 
     public function getContentRepositoryId(): ContentRepositoryId
     {
+        if ($this->debug) \Neos\Flow\var_dump('getContentRepositoryId called');
         return $this->contentRepositoryId;
     }
 
     public function getWorkspaceName(): WorkspaceName
     {
+        if ($this->debug) \Neos\Flow\var_dump('getWorkspaceName called');
         return $this->workspaceName;
     }
 
     public function getDimensionSpacePoint(): DimensionSpacePoint
     {
+        if ($this->debug) \Neos\Flow\var_dump('getDimensionSpacePoint called');
         return $this->dimensionSpacePoint;
     }
 
     public function getVisibilityConstraints(): VisibilityConstraints
     {
+        if ($this->debug) \Neos\Flow\var_dump('getVisibilityConstraints called');
         return $this->visibilityConstraints;
     }
 
     public function findNodeById(NodeAggregateId $nodeAggregateId): ?Node
     {
+        if ($this->debug) \Neos\Flow\var_dump('findNodeById called with' . $nodeAggregateId->value);
         $result = $this->client->runStatement(
             NodeQueryBuilder::createForNodes()
                 ->matchNodeForSubgraph(
@@ -77,7 +82,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
                     $nodeAggregateId,
                 )
                 ->withVisibilityConstraints($this->visibilityConstraints)
-                ->returns('n')
+                ->returns('n, rel')
                 ->build()
         );
 
@@ -86,7 +91,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
         }
 
         return $this->nodeFactory->mapResultToNode(
-            $result->getAsCypherMap(0)->getAsNode('n'),
+            $result->getAsCypherMap(0),
             $this->workspaceName,
             $this->dimensionSpacePoint,
             $this->visibilityConstraints,
@@ -95,6 +100,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function findNodesByIds(NodeAggregateIds $nodeAggregateIds): Nodes
     {
+        if ($this->debug) \Neos\Flow\var_dump('findNodesByIds called with' . implode(',', $nodeAggregateIds->map(fn(NodeAggregateId $id) => $id->value)));
         $nodes = [];
         foreach ($nodeAggregateIds as $nodeAggregateId) {
             $node = $this->findNodeById($nodeAggregateId);
@@ -107,6 +113,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function findRootNodeByType(NodeTypeName $nodeTypeName): ?Node
     {
+        if ($this->debug) \Neos\Flow\var_dump('findRootNodeByType called with' . $nodeTypeName->value);
         $result = $this->client->runStatement(
             Statement::create(
                 'MATCH (n:Node {nodeTypeName: $nodeTypeName})-[:IS_CHILD{contentStreamId: $contentStreamId, dimensionSpacePointHash: $dimensionSpacePointHash}]->(:Root) RETURN DISTINCT n',
@@ -132,6 +139,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function findChildNodes(NodeAggregateId $parentNodeAggregateId, Filter\FindChildNodesFilter $filter): Nodes
     {
+        if ($this->debug) \Neos\Flow\var_dump('findChildNodes called with parentNodeAggregateId: ' . $parentNodeAggregateId->value);
         $query = $this->getChildNodesQuery(
             $parentNodeAggregateId,
             $filter
@@ -153,6 +161,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function countChildNodes(NodeAggregateId $parentNodeAggregateId, Filter\CountChildNodesFilter $filter): int
     {
+        if ($this->debug) \Neos\Flow\var_dump('countChildNodes called with parentNodeAggregateId: ' . $parentNodeAggregateId->value);
         $query = $this->getChildNodesQuery(
             $parentNodeAggregateId,
             $filter
@@ -224,6 +233,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function findParentNode(NodeAggregateId $childNodeAggregateId): ?Node
     {
+        if ($this->debug) \Neos\Flow\var_dump('findParentNode called with childNodeAggregateId: ' . $childNodeAggregateId->value);
         $result = $this->client->runStatement(
             NodeQueryBuilder::createForNodes()
                 ->matchNodeForSubgraph(
@@ -252,6 +262,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
         NodeAggregateId $siblingNodeAggregateId,
         Filter\FindSucceedingSiblingNodesFilter $filter
     ): Nodes {
+        if ($this->debug) \Neos\Flow\var_dump('findSucceedingSiblingNodes called with siblingNodeAggregateId: ' . $siblingNodeAggregateId->value);
         $result = $this->client->runStatement(
             $this->getSiblingNodesQuery(
                 $siblingNodeAggregateId,
@@ -282,6 +293,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
         NodeAggregateId $siblingNodeAggregateId,
         Filter\FindPrecedingSiblingNodesFilter $filter
     ): Nodes {
+        if ($this->debug) \Neos\Flow\var_dump('findPrecedingSiblingNodes called with siblingNodeAggregateId: ' . $siblingNodeAggregateId->value);
         $result = $this->client->runStatement(
             $this->getSiblingNodesQuery(
                 $siblingNodeAggregateId,
@@ -381,6 +393,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function findAncestorNodes(NodeAggregateId $entryNodeAggregateId, Filter\FindAncestorNodesFilter $filter): Nodes
     {
+        if ($this->debug) \Neos\Flow\var_dump('findAncestorNodes called with entryNodeAggregateId: ' . $entryNodeAggregateId->value);
         $query = NodeQueryBuilder::createForNodes()
             ->matchRootPath(
                 $entryNodeAggregateId,
@@ -420,6 +433,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function countAncestorNodes(NodeAggregateId $entryNodeAggregateId, Filter\CountAncestorNodesFilter $filter): int
     {
+        if ($this->debug) \Neos\Flow\var_dump('countAncestorNodes called with entryNodeAggregateId: ' . $entryNodeAggregateId->value);
         $result = $this->client->runStatement(
             Statement::create(
                 'MATCH (n:Node {aggregateId: $aggregateId})-[:IS_CHILD {contentStreamId: $contentStreamId, dimensionSpacePointHash: $dimensionSpacePointHash}]->()
@@ -440,6 +454,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function findClosestNode(NodeAggregateId $entryNodeAggregateId, Filter\FindClosestNodeFilter $filter): ?Node
     {
+        if ($this->debug) \Neos\Flow\var_dump('findClosestNode called with entryNodeAggregateId: ' . $entryNodeAggregateId->value);
         $query = NodeQueryBuilder::createForNodes()
             ->matchNodeForSubgraph(
                 $this->contentStreamId,
@@ -486,6 +501,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function findDescendantNodes(NodeAggregateId $entryNodeAggregateId, Filter\FindDescendantNodesFilter $filter): Nodes
     {
+        if ($this->debug) \Neos\Flow\var_dump('findDescendantNodes called with entryNodeAggregateId: ' . $entryNodeAggregateId->value);
         $query = NodeQueryBuilder::createForNodes()
             ->matchNodeForSubgraph(
                 $this->contentStreamId,
@@ -546,6 +562,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function countDescendantNodes(NodeAggregateId $entryNodeAggregateId, Filter\CountDescendantNodesFilter $filter): int
     {
+        if ($this->debug) \Neos\Flow\var_dump('countDescendantNodes called with entryNodeAggregateId: ' . $entryNodeAggregateId->value);
         $result = $this->client->runStatement(
             Statement::create(
                 'MATCH (:Node {aggregateId: $aggregateId})<-[:IS_CHILD*1.. {contentStreamId: $contentStreamId, dimensionSpacePointHash: $dimensionSpacePointHash}]-(descendant:Node) RETURN count(DISTINCT descendant) as count',
@@ -565,6 +582,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function findSubtree(NodeAggregateId $entryNodeAggregateId, Filter\FindSubtreeFilter $filter): ?Subtree
     {
+        if ($this->debug) \Neos\Flow\var_dump('findSubtree called with entryNodeAggregateId: ' . $entryNodeAggregateId->value);
         $maxLevels = $filter->maximumLevels ?? 10; // Default to reasonable depth
         $query = NodeQueryBuilder::createForNodes()
             ->matchNodeForSubgraph(
@@ -755,6 +773,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function findReferences(NodeAggregateId $nodeAggregateId, Filter\FindReferencesFilter $filter): References
     {
+        if ($this->debug) \Neos\Flow\var_dump('findReferences called with nodeAggregateId: ' . $nodeAggregateId->value);
         $query = $this->getReferencesQuery(false, $nodeAggregateId, $filter);
         $query->returns('target, ref');
         $result = $this->client->runStatement($query->build());
@@ -772,6 +791,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function countReferences(NodeAggregateId $nodeAggregateId, Filter\CountReferencesFilter $filter): int
     {
+        if ($this->debug) \Neos\Flow\var_dump('countReferences called with nodeAggregateId: ' . $nodeAggregateId->value);
         $query = $this->getReferencesQuery(false, $nodeAggregateId, $filter);
         $query->returns('COUNT(DISTINCT target AS count');
         return $this->client->runStatement($query->build())->getAsCypherMap(0)->getAsInt('count');
@@ -779,6 +799,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function findBackReferences(NodeAggregateId $nodeAggregateId, Filter\FindBackReferencesFilter $filter): References
     {
+        if ($this->debug) \Neos\Flow\var_dump('findBackReferences called with nodeAggregateId: ' . $nodeAggregateId->value);
         $query = $this->getReferencesQuery(true, $nodeAggregateId, $filter);
         $query->returns('target, ref');
         $result = $this->client->runStatement($query->build());
@@ -794,6 +815,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function countBackReferences(NodeAggregateId $nodeAggregateId, Filter\CountBackReferencesFilter $filter): int
     {
+        if ($this->debug) \Neos\Flow\var_dump('countBackReferences called with nodeAggregateId: ' . $nodeAggregateId->value);
         $query = $this->getReferencesQuery(true, $nodeAggregateId, $filter);
         $query->returns('COUNT(DISTINCT target AS count');
         return $this->client->runStatement($query->build())->getAsCypherMap(0)->getAsInt('count');
@@ -888,6 +910,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function findNodeByPath(NodeName|NodePath $path, NodeAggregateId $startingNodeAggregateId): ?Node
     {
+        if ($this->debug) \Neos\Flow\var_dump('findNodeByPath called with path: ' . ' __ insert path here... __ ' . ' and startingNodeAggregateId: ' . $startingNodeAggregateId->value);
         $path = $path instanceof NodeName ? NodePath::fromNodeNames($path) : $path;
 
         return $this->findNodeByPathFromStartingNode($path, $startingNodeAggregateId);
@@ -895,6 +918,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function findNodeByAbsolutePath(AbsoluteNodePath $path): ?Node
     {
+        if ($this->debug) \Neos\Flow\var_dump('findNodeByAbsolutePath called with path: ' . $path->path . ' and rootNodeTypeName: ' . $path->rootNodeTypeName);
         $startingNode = $this->findRootNodeByType($path->rootNodeTypeName);
 
         return $startingNode
@@ -936,7 +960,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
             $lastNodeAlias = sprintf('childNode%s', $highestIndex);
         }
-        $query->returns(sprintf('childNode%s as node', $highestIndex));
+        $query->returns(sprintf('childNode%s as node, childRel%s as rel', $highestIndex, $highestIndex));
 
         $result = $this->client->runStatement($query->build());
 
@@ -945,7 +969,7 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
         }
 
         return $this->nodeFactory->mapResultToNode(
-            $result->getAsCypherMap(0)->getAsNode('node'),
+            $result->getAsCypherMap(0),
             $this->workspaceName,
             $this->dimensionSpacePoint,
             $this->visibilityConstraints,
@@ -954,12 +978,14 @@ class Neo4jContentSubgraph implements ContentSubgraphInterface
 
     public function retrieveNodePath(NodeAggregateId $nodeAggregateId): AbsoluteNodePath
     {
+        if ($this->debug) \Neos\Flow\var_dump('retrieveNodePath called with nodeAggregateId: ' . $nodeAggregateId->value);
         // TODO: Implement retrieveNodePath() method.
         throw new \RuntimeException('Not implemented yet');
     }
 
     public function countNodes(): int
     {
+        if ($this->debug) \Neos\Flow\var_dump('countNodes called');
         /** @var SummarizedResult $result */
         $result = $this->client->runStatement(
             Statement::create(

@@ -10,6 +10,7 @@ use Neos\ContentRepository\Core\SharedModel\Node\NodeAggregateId;
 use Neos\ContentRepository\Core\SharedModel\Workspace\ContentStreamId;
 use Neos\ContentRepository\Core\NodeType\NodeTypeName;
 use Neos\ContentRepository\Core\DimensionSpace\DimensionSpacePoint;
+use Ramsey\Uuid\Uuid;
 
 /**
  * Specialized query builder for Node-related queries
@@ -42,10 +43,11 @@ final class NodeQueryBuilder extends QueryBuilder
         string $nodeAlias = 'n',
         string $relationAlias = 'rel',
         string $parentAlias = 'p',
+        string $parameterAlias = 'alias'
     ): self {
-        return $this->match("({$nodeAlias}:Node {aggregateId: \$aggregateId})-[{$relationAlias}:IS_CHILD {contentStreamId: \$contentStreamId, dimensionSpacePointHash: \$dimensionSpacePointHash}]->({$parentAlias}:Node|Root)")
+        return $this->match("({$nodeAlias}:Node {aggregateId: \$aggregateId$parameterAlias})-[{$relationAlias}:IS_CHILD {contentStreamId: \$contentStreamId, dimensionSpacePointHash: \$dimensionSpacePointHash}]->({$parentAlias}:Node|Root)")
            ->withParameter(
-               'aggregateId',
+               'aggregateId'. $parameterAlias,
                $nodeAggregateId instanceof NodeAggregateId ? $nodeAggregateId->value : $nodeAggregateId->getProperty('aggregateId')
            )
            ->withParameter('contentStreamId', $contentStreamId->value)
