@@ -1204,7 +1204,79 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
 
     private function whenRootNodeAggregateDimensionsWereUpdated(RootNodeAggregateDimensionsWereUpdated $event): void
     {
-        // TODO: Implement
+        // Find the root node
+        $rootNodeResult = $this->client->runStatement(
+            Statement::create(
+                'MATCH (rootNode:Node {aggregateId: $aggregateId})
+                RETURN rootNode',
+                [
+                    'aggregateId' => $event->nodeAggregateId->value,
+                ]
+            )
+        );
+        
+        if ($rootNodeResult->isEmpty()) {
+            // Root node not found - should never happen
+            return;
+        }
+        
+        $rootNode = $rootNodeResult->getAsCypherMap(0)->getAsNode('rootNode');
+        
+        // Get currently covered dimension space points
+        $currentRelationsResult = $this->client->runStatement(
+            Statement::create(
+                'MATCH (rootNode:Node {aggregateId: $aggregateId})-[rel:IS_CHILD {contentStreamId: $contentStreamId}]->(root:Root)
+                RETURN COLLECT(DISTINCT rel.dimensionSpacePointHash) as currentDimensionSpacePointHashes',
+                [
+                    'aggregateId' => $event->nodeAggregateId->value,
+                    'contentStreamId' => $event->contentStreamId->value,
+                ]
+            )
+        );
+        
+        $currentDimensionSpacePointHashes = [];
+        if (!$currentRelationsResult->isEmpty()) {
+            $cypherList = $currentRelationsResult->getAsCypherMap(0)->get('currentDimensionSpacePointHashes');
+            if ($cypherList !== null) {
+                // Convert CypherList to PHP array
+                $currentDimensionSpacePointHashes = $cypherList->toArray();
+            }
+        }
+        
+        // Determine newly covered dimension space points
+        $newlyCoveredDimensionSpacePoints = [];
+        foreach ($event->coveredDimensionSpacePoints as $dimensionSpacePoint) {
+            if (!in_array($dimensionSpacePoint->hash, $currentDimensionSpacePointHashes, true)) {
+                $newlyCoveredDimensionSpacePoints[] = $dimensionSpacePoint;
+            }
+        }
+        
+        // Add new IS_CHILD relationships for newly covered dimension space points
+        foreach ($newlyCoveredDimensionSpacePoints as $dimensionSpacePoint) {
+            $this->client->runStatement(
+                Statement::create(
+                    'MATCH (rootNode:Node) WHERE ID(rootNode) = $rootNodeId
+                    MERGE (root:Root)
+                    CREATE (rootNode)-[:IS_CHILD {
+                        contentStreamId: $contentStreamId,
+                        dimensionSpacePointHash: $dimensionSpacePointHash,
+                        position: $position
+                    }]->(root)',
+                    [
+                        'rootNodeId' => $rootNode->getId(),
+                        'contentStreamId' => $event->contentStreamId->value,
+                        'dimensionSpacePointHash' => $dimensionSpacePoint->hash,
+                        'position' => $this->projectionContentGraph->determineRootNodePosition(
+                            $event->contentStreamId,
+                            $dimensionSpacePoint,
+                        ),
+                    ]
+                )
+            );
+            
+            // Register the dimension space point if not already registered
+            $this->dimensionSpacePointsRepository->insertDimensionSpacePoint($dimensionSpacePoint);
+        }
     }
 
     private function whenRootNodeAggregateWithNodeWasCreated(
