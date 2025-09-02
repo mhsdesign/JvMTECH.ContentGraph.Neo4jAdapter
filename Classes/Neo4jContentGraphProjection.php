@@ -913,7 +913,7 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
             );
         }
 
-        $affectedNode = $this->cloneNodeIfRequired($event->contentStreamId, $affectedNode, true);
+        $affectedNode = $this->cloneNodeIfRequired($event->contentStreamId, $affectedNode);
         $this->client->runStatement(
             Statement::create(
                 'MATCH (n) WHERE ID(n) = $nodeId
@@ -945,7 +945,7 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
             NodeQueryBuilder::createForNodes()
                 ->match('(n:Node {aggregateId: $aggregateId})-[rel:IS_CHILD]->()')
                 ->withParameter('aggregateId', $affectedNode->getProperty('aggregateId'))
-                ->returns('rel as rels, COUNT(DISTINCT rel) as count')
+                ->returns('COUNT(DISTINCT rel) as count')
                 ->build()
         );
 
