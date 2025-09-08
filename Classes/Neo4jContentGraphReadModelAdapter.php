@@ -119,7 +119,7 @@ class Neo4jContentGraphReadModelAdapter implements ContentGraphReadModelInterfac
             WorkspaceName::fromString($properties['name']),
             $baseWorkspaceName ? WorkspaceName::fromString($baseWorkspaceName) : null,
             ContentStreamId::fromString($contentStream->getProperty('contentStreamId')),
-            $contentStream->getProperty('hasChanges') === 0 || $baseWorkspaceName !== null ?
+            $contentStream->getProperty('hasChanges') === 0 ?
                 WorkspaceStatus::UP_TO_DATE :
                 WorkspaceStatus::OUTDATED,
             $contentStream->getProperty('hasChanges') !== 0 && $baseWorkspaceName !== null,

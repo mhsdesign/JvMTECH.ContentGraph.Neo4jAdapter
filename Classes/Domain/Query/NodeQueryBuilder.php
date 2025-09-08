@@ -96,7 +96,7 @@ final class NodeQueryBuilder extends QueryBuilder
         string $relationAlias = 'rel',
         string $parentAlias = 'p'
     ): self {
-        return $this->match("({$parentAlias}:Node|Root {aggregateId: \$aggregateId})<-[{$relationAlias}:IS_CHILD {contentStreamId: \$contentStreamId, dimensionSpacePointHash: \$dimensionSpacePointHash}]-({$nodeAlias}:Node)")
+        return $this->match("({$parentAlias}:Node {aggregateId: \$aggregateId})<-[{$relationAlias}:IS_CHILD {contentStreamId: \$contentStreamId, dimensionSpacePointHash: \$dimensionSpacePointHash}]-({$nodeAlias}:Node)")
            ->withParameter('aggregateId',
                $parentNodeAggregateId instanceof NodeAggregateId ? $parentNodeAggregateId->value : $parentNodeAggregateId->getProperty('aggregateId')
            )

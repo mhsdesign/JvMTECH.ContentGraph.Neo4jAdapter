@@ -30,6 +30,7 @@ use Neos\ContentRepository\Core\Feature\ContentStreamEventStreamName;
 use Neos\ContentRepository\Core\Feature\ContentStreamForking\Event\ContentStreamWasForked;
 use Neos\ContentRepository\Core\Feature\ContentStreamRemoval\Event\ContentStreamWasRemoved;
 use Neos\ContentRepository\Core\Feature\DimensionSpaceAdjustment\Event\DimensionShineThroughWasAdded;
+use Neos\ContentRepository\Core\Feature\DimensionSpaceAdjustment\Event\DimensionSpacePointWasMoved;
 use Neos\ContentRepository\Core\Feature\NodeCreation\Event\NodeAggregateWithNodeWasCreated;
 use Neos\ContentRepository\Core\Feature\NodeModification\Event\NodePropertiesWereSet;
 use Neos\ContentRepository\Core\Feature\NodeMove\Event\NodeAggregateWasMoved;
@@ -151,7 +152,7 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
             ContentStreamWasRemoved::class => $this->whenContentStreamWasRemoved($event),
             ContentStreamWasReopened::class => $this->whenContentStreamWasReopened($event),
             DimensionShineThroughWasAdded::class => $this->whenDimensionShineThroughWasAdded($event),
-//            DimensionSpacePointWasMoved::class => $this->whenDimensionSpacePointWasMoved($event),
+            DimensionSpacePointWasMoved::class => $this->whenDimensionSpacePointWasMoved($event),
             NodeAggregateNameWasChanged::class => $this->whenNodeAggregateNameWasChanged($event, $eventEnvelope),
             NodeAggregateTypeWasChanged::class => $this->whenNodeAggregateTypeWasChanged($event, $eventEnvelope),
             NodeAggregateWasMoved::class => $this->whenNodeAggregateWasMoved($event),
@@ -254,13 +255,71 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
             Statement::create(
                 '
                 MATCH (childNode:Node)-[r:IS_CHILD {contentStreamId: $contentStreamId, dimensionSpacePointHash: $sourceDimensionSpacePointHash}]->(parentNode:Node|Root)
-                CREATE (childNode)-[rNew:IS_CHILD {contentStreamId: r.contentStream, dimensionSpacePointHash: $targetDimensionSpacePointHash, position: r.position}]->(parentNode)
+                CREATE (childNode)-[rNew:IS_CHILD {contentStreamId: r.contentStreamId, dimensionSpacePointHash: $targetDimensionSpacePointHash, position: r.position}]->(parentNode)
                 FOREACH (_ IN CASE WHEN r.subtreeTags IS NOT NULL THEN [1] ELSE [] END |
                       SET rNew.subtreeTags = r.subtreeTags
                   )
                 ',
                 [
                     'contentStreamId' => $event->getContentStreamId()->value,
+                    'sourceDimensionSpacePointHash' => $event->source->hash,
+                    'targetDimensionSpacePointHash' => $event->target->hash,
+                ]
+            )
+        );
+    }
+
+    private function whenDimensionSpacePointWasMoved(DimensionSpacePointWasMoved $event): void
+    {
+        // Register the target dimension space point
+        $this->dimensionSpacePointsRepository->insertDimensionSpacePoint($event->target);
+
+        // 1) Find all nodes with origin at source dimension space point that need updating
+        // We need to find nodes in the specific content stream that have their origin at the source dimension space point
+        $nodesWithOriginAtSource = $this->client->runStatement(
+            Statement::create(
+                'MATCH (n:Node {originDimensionSpacePointHash: $sourceDimensionSpacePointHash})
+                WHERE EXISTS {
+                    MATCH (n)-[:IS_CHILD {contentStreamId: $contentStreamId}]->()
+                } OR EXISTS {
+                    MATCH (n)<-[:IS_CHILD {contentStreamId: $contentStreamId}]-()
+                }
+                RETURN DISTINCT n',
+                [
+                    'sourceDimensionSpacePointHash' => $event->source->hash,
+                    'contentStreamId' => $event->contentStreamId->value,
+                ]
+            )
+        );
+
+        // Update each node's origin dimension space point with copy-on-write
+        foreach ($nodesWithOriginAtSource as $nodeResult) {
+            $node = $nodeResult->getAsNode('n');
+            $affectedNode = $this->cloneNodeIfRequired($event->contentStreamId, $node);
+
+            // Update the node's origin dimension space point
+            $this->client->runStatement(
+                Statement::create(
+                    'MATCH (n) WHERE ID(n) = $nodeId
+                    SET n.originDimensionSpacePointHash = $targetDimensionSpacePointHash',
+                    [
+                        'nodeId' => $affectedNode->getId(),
+                        'targetDimensionSpacePointHash' => $event->target->hash,
+                    ]
+                )
+            );
+        }
+
+        // 2) Update all IS_CHILD relationships from source to target dimension space point
+        $this->client->runStatement(
+            Statement::create(
+                'MATCH ()-[rel:IS_CHILD {
+                    contentStreamId: $contentStreamId,
+                    dimensionSpacePointHash: $sourceDimensionSpacePointHash
+                }]->()
+                SET rel.dimensionSpacePointHash = $targetDimensionSpacePointHash',
+                [
+                    'contentStreamId' => $event->contentStreamId->value,
                     'sourceDimensionSpacePointHash' => $event->source->hash,
                     'targetDimensionSpacePointHash' => $event->target->hash,
                 ]
@@ -311,21 +370,35 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
 
     private function whenNodeAggregateTypeWasChanged(NodeAggregateTypeWasChanged $event, EventEnvelope $eventEnvelope): void
     {
-        // TODO: Use correct copy on write handling here
+        // Find all nodes with this aggregate ID that are in the affected content stream
         $affectedNodesInContentStream = $this->client->runStatement(
             Statement::create(
-                'MATCH (node:Node {aggregateId: $aggregateId})-[:IS_CHILD {contentStreamId: $contentStreamId}]-() RETURN DISTINCT node',
+                'MATCH (node:Node {aggregateId: $aggregateId})
+                WHERE EXISTS((node)-[:IS_CHILD {contentStreamId: $contentStreamId}]-())
+                   OR EXISTS((node)<-[:IS_CHILD {contentStreamId: $contentStreamId}]-())
+                RETURN DISTINCT node',
                 [
                     'aggregateId' => $event->nodeAggregateId->value,
                     'contentStreamId' => $event->contentStreamId->value,
                 ]
             )
         );
+
         foreach ($affectedNodesInContentStream as $affectedNodeCypher) {
             $affectedNode = $affectedNodeCypher->getAsNode('node');
+
+            // Check if this node exists in multiple content streams (copy-on-write check)
             $nodeContentStreams = $this->client->runStatement(
                 Statement::create(
-                    'MATCH (n)-[rel:IS_CHILD]->() WHERE ID(n) = $nodeId RETURN DISTINCT rel.contentStreamId as contentStreamId',
+                    'MATCH (n)
+                    WHERE ID(n) = $nodeId
+                    OPTIONAL MATCH (n)-[r1:IS_CHILD]->()
+                    OPTIONAL MATCH (n)<-[r2:IS_CHILD]-()
+                    WITH COLLECT(DISTINCT r1.contentStreamId) + COLLECT(DISTINCT r2.contentStreamId) AS allStreams
+                    UNWIND allStreams AS stream
+                    WITH DISTINCT stream
+                    WHERE stream IS NOT NULL
+                    RETURN stream as contentStreamId',
                     [
                         'nodeId' => $affectedNode->getId(),
                     ]
@@ -942,11 +1015,19 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
     ): Node {
         // Get all content streams where the node is referenced
         $nodeContentStreams = $this->client->runStatement(
-            NodeQueryBuilder::createForNodes()
-                ->match('(n:Node {aggregateId: $aggregateId})-[rel:IS_CHILD]->()')
-                ->withParameter('aggregateId', $affectedNode->getProperty('aggregateId'))
-                ->returns('COUNT(DISTINCT rel) as count')
-                ->build()
+            Statement::create(
+                'MATCH (n:Node {aggregateId: $aggregateId})
+                OPTIONAL MATCH (n)-[r1:IS_CHILD]->()
+                OPTIONAL MATCH (n)<-[r2:IS_CHILD]-()
+                WITH COLLECT(DISTINCT r1.contentStreamId) + COLLECT(DISTINCT r2.contentStreamId) AS allStreams
+                UNWIND allStreams AS stream
+                WITH DISTINCT stream
+                WHERE stream IS NOT NULL
+                RETURN COUNT(DISTINCT stream) as count',
+                [
+                    'aggregateId' => $affectedNode->getProperty('aggregateId'),
+                ]
+            )
         );
 
         if ($nodeContentStreams->getAsCypherMap(0)->getAsInt('count') > 1) {
@@ -1214,14 +1295,14 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
                 ]
             )
         );
-        
+
         if ($rootNodeResult->isEmpty()) {
             // Root node not found - should never happen
             return;
         }
-        
+
         $rootNode = $rootNodeResult->getAsCypherMap(0)->getAsNode('rootNode');
-        
+
         // Get currently covered dimension space points
         $currentRelationsResult = $this->client->runStatement(
             Statement::create(
@@ -1233,7 +1314,7 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
                 ]
             )
         );
-        
+
         $currentDimensionSpacePointHashes = [];
         if (!$currentRelationsResult->isEmpty()) {
             $cypherList = $currentRelationsResult->getAsCypherMap(0)->get('currentDimensionSpacePointHashes');
@@ -1242,7 +1323,7 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
                 $currentDimensionSpacePointHashes = $cypherList->toArray();
             }
         }
-        
+
         // Determine newly covered dimension space points
         $newlyCoveredDimensionSpacePoints = [];
         foreach ($event->coveredDimensionSpacePoints as $dimensionSpacePoint) {
@@ -1250,7 +1331,7 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
                 $newlyCoveredDimensionSpacePoints[] = $dimensionSpacePoint;
             }
         }
-        
+
         // Add new IS_CHILD relationships for newly covered dimension space points
         foreach ($newlyCoveredDimensionSpacePoints as $dimensionSpacePoint) {
             $this->client->runStatement(
@@ -1273,7 +1354,7 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
                     ]
                 )
             );
-            
+
             // Register the dimension space point if not already registered
             $this->dimensionSpacePointsRepository->insertDimensionSpacePoint($dimensionSpacePoint);
         }

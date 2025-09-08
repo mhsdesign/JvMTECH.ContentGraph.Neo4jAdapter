@@ -29,7 +29,9 @@ class QueryBuilder
 
     public function where(string $condition): self
     {
-        $this->addClause('WHERE', $condition);
+        if (!empty($condition)) {
+            $this->addClause('WHERE', $condition);
+        }
         return $this;
     }
 
