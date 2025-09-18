@@ -191,7 +191,7 @@ final class NodeFactory
             $nodeData = $record;
             $nodeTags = NodeTags::createEmpty();
         }
-        
+
         return Node::create(
             $this->contentRepositoryId,
             $workspaceName,

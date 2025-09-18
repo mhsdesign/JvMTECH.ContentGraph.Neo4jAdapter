@@ -15,19 +15,29 @@ class QueryBuilder
     private array $clauses = [];
     private array $parameters = [];
 
-    public function match(string $pattern): self
+    public function debug(?string $title = null): static
+    {
+        $text = $this->build()->getText();
+        foreach ($this->getParameters() as $parameter => $value) {
+            $replacement = is_string($value) ? "'" . $value . "'" : (is_array($value) ? '["' . implode('", "', $value) . '"]' : (is_null($value) ? 'NULL' : (is_bool($value) ? ($value ? 'TRUE' : 'FALSE') : $value)));
+            $text = str_replace('$' . $parameter, (string)$replacement, $text);
+        }
+        \Neos\Flow\var_dump($text, $title);
+        return $this;
+    }
+    public function match(string $pattern): static
     {
         $this->addClause('MATCH', $pattern);
         return $this;
     }
 
-    public function optionalMatch(string $pattern): self
+    public function optionalMatch(string $pattern): static
     {
         $this->addClause('OPTIONAL MATCH', $pattern);
         return $this;
     }
 
-    public function where(string $condition): self
+    public function where(string $condition): static
     {
         if (!empty($condition)) {
             $this->addClause('WHERE', $condition);
@@ -35,113 +45,127 @@ class QueryBuilder
         return $this;
     }
 
-    public function with(string $expression): self
+    public function with(string $expression): static
     {
         $this->addClause('WITH', $expression);
         return $this;
     }
 
-    public function returns(string $expression): self
+    public function returns(string $expression): static
     {
         $this->addClause('RETURN', $expression);
         return $this;
     }
 
-    public function returnDistinct(string $expression): self
+    public function returnDistinct(string $expression): static
     {
         $this->addClause('RETURN', 'DISTINCT ' . $expression);
         return $this;
     }
 
-    public function orderBy(string $expression, string $direction = 'ASC'): self
+    public function orderBy(string $expression, string $direction = 'ASC'): static
     {
         $this->addClause('ORDER BY', $expression . ' ' . strtoupper($direction));
         return $this;
     }
 
-    public function create(string $pattern): self
+    public function create(string $pattern): static
     {
         $this->addClause('CREATE', $pattern);
         return $this;
     }
 
-    public function merge(string $pattern): self
+    public function merge(string $pattern): static
     {
         $this->addClause('MERGE', $pattern);
         return $this;
     }
 
-    public function delete(string $expression): self
+    public function delete(string $expression): static
     {
         $this->addClause('DELETE', $expression);
         return $this;
     }
 
-    public function detachDelete(string $expression): self
+    public function detachDelete(string $expression): static
     {
         $this->addClause('DETACH DELETE', $expression);
         return $this;
     }
 
-    public function set(string $expression): self
+    public function set(string $expression): static
     {
         $this->addClause('SET', $expression);
         return $this;
     }
 
-    public function remove(string $expression): self
+    public function remove(string $expression): static
     {
         $this->addClause('REMOVE', $expression);
         return $this;
     }
 
-    public function limit(int $limit): self
+    public function limit(int $limit): static
     {
         $this->addClause('LIMIT', (string)$limit);
         return $this;
     }
 
-    public function skip(int $skip): self
+    public function skip(int $skip): static
     {
         $this->addClause('SKIP', (string)$skip);
         return $this;
     }
 
-    public function foreach(string $expression): self
+    public function foreach(string $expression): static
     {
         $this->addClause('FOREACH', $expression);
         return $this;
     }
 
-    public function call(string $procedure): self
+    public function call(string $procedure): static
     {
         $this->addClause('CALL', $procedure);
         return $this;
     }
 
-    public function yield(string $expression): self
+    public function yield(string $expression): static
     {
         $this->addClause('YIELD', $expression);
         return $this;
     }
 
-    public function unwind(string $expression): self
+    public function unwind(string $expression): static
     {
         $this->addClause('UNWIND', $expression);
         return $this;
     }
 
-    public function union(bool $all = false): self
+    public function union(bool $all = false): static
     {
         $clause = $all ? 'UNION ALL' : 'UNION';
         $this->addClause($clause, '');
         return $this;
     }
 
-    public function rawClause(string $clause, string $expression = ''): self
+    public function rawClause(string $clause, string $expression = ''): static
     {
         $this->addClause($clause, $expression);
         return $this;
+    }
+
+    /**
+    * @param callable(static): static $subClauses
+    */
+    public function rawClauseBuilder(callable $subClauses): static
+    {
+        $statement = $subClauses(new static())->build();
+        $text = $statement->getText();
+        foreach ($statement->getParameters() as $parameter => $value) {
+            $replacement = is_string($value) ? "'" . $value . "'" : (is_array($value) ? '["' . implode('", "', $value) . '"]' : (is_null($value) ? 'NULL' : (is_bool($value) ? ($value ? 'TRUE' : 'FALSE') : $value)));
+            $text = str_replace('$' . $parameter, $replacement, $text);
+        }
+        return $this->rawClause($text);
     }
 
     private function addClause(string $type, string $expression): void
@@ -152,13 +176,13 @@ class QueryBuilder
         ];
     }
 
-    public function withParameters(array $parameters): self
+    public function withParameters(array $parameters): static
     {
         $this->parameters = array_merge($this->parameters, $parameters);
         return $this;
     }
 
-    public function withParameter(string $key, mixed $value): self
+    public function withParameter(string $key, mixed $value): static
     {
         $this->parameters[$key] = $value;
         return $this;
@@ -168,6 +192,7 @@ class QueryBuilder
     {
         $cypher = [];
         $lastClause = [];
+        $appendClauses = [];
 
         foreach ($this->clauses as $clause) {
             $type = $clause['type'];
@@ -184,9 +209,16 @@ class QueryBuilder
                         $type = ',';
                     }
                 }
+                if ($type === 'RETURN') {
+                    $appendClauses[] = $clause;
+                    continue;
+                }
                 $cypher[] = $type . ' ' . $expression;
             }
             $lastClause = $clause;
+        }
+        foreach ($appendClauses as $appendClause) {
+            $cypher[] = $appendClause['type'] . ' ' . $appendClause['expression'];
         }
 
         return implode("\n", array_filter($cypher));
@@ -209,14 +241,12 @@ class QueryBuilder
 
     /**
      * @param callable(static): static $subClauses
-     * @param string $groupAlias
-     * @return self
      */
-    public function whereAll(callable $subClauses, string $groupAlias = 'rels'): self
+    public function whereAll(callable $subClauses, string $groupAlias = 'rels'): static
     {
-        $statement = $subClauses(new QueryBuilder())->build();
+        $statement = $subClauses(new static())->build();
         $this
-            ->where(sprintf('all(r IN %s %s)', $groupAlias, $statement->getText()))
+            ->where(sprintf('all(rel IN %s %s)', $groupAlias, $statement->getText()))
             ->withParameters($statement->getParameters());
         return $this;
     }

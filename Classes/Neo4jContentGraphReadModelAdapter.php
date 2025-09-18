@@ -7,7 +7,6 @@ use JvMTECH\ContentGraph\Neo4jAdapter\Domain\Repository\Neo4jDimensionSpacePoint
 use JvMTECH\ContentGraph\Neo4jAdapter\Domain\Repository\NodeFactory;
 use Laudis\Neo4j\Contracts\ClientInterface;
 use Laudis\Neo4j\Databags\Statement;
-use Laudis\Neo4j\Databags\SummarizedResult;
 use Laudis\Neo4j\Types\CypherMap;
 use Neos\ContentRepository\Core\NodeType\NodeTypeManager;
 use Neos\ContentRepository\Core\Projection\ContentGraph\ContentGraphInterface;
@@ -30,12 +29,14 @@ class Neo4jContentGraphReadModelAdapter implements ContentGraphReadModelInterfac
         private readonly NodeFactory $nodeFactory,
         private readonly Neo4jDimensionSpacePointsRepository $dimensionSpacePointsRepository,
         private readonly NodeTypeManager $nodeTypeManager,
+        private readonly bool $debug = false,
     )
     {
     }
 
     public function getContentGraph(WorkspaceName $workspaceName): ContentGraphInterface
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         $result = $this->client->runStatement(
             Statement::create(
                 'MATCH (:Workspace {name: $workspaceName})-[:CONTENT_STREAM]->(contentStream:ContentStream) RETURN contentStream.contentStreamId AS contentStreamId',
@@ -60,6 +61,7 @@ class Neo4jContentGraphReadModelAdapter implements ContentGraphReadModelInterfac
 
     public function findContentStreamById(ContentStreamId $contentStreamId): ?ContentStream
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__ . ' ' . $contentStreamId->value);
         $result = $this->client->runStatement(
             Statement::create(
                 'MATCH (contentStream:ContentStream {contentStreamId: $contentStreamId})
@@ -86,6 +88,7 @@ class Neo4jContentGraphReadModelAdapter implements ContentGraphReadModelInterfac
 
     public function countNodes(): int
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         $result = $this->client->runStatement(
             Statement::create('MATCH (n:Node) RETURN count(n) AS nodeCount')
         );
@@ -97,42 +100,53 @@ class Neo4jContentGraphReadModelAdapter implements ContentGraphReadModelInterfac
 
     public function findWorkspaceByName(WorkspaceName $workspaceName): ?Workspace
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__ . ' ' . $workspaceName->value);
         $result = $this->client->runStatement(
             Statement::create(
                 'MATCH (workspace:Workspace {name: $workspaceName})
                 OPTIONAL MATCH (workspace)-[:BASE_WORKSPACE]->(baseWorkspace:Workspace)
                 MATCH (workspace)-[:CONTENT_STREAM]->(contentStream:ContentStream)
-                RETURN workspace, baseWorkspace, contentStream',
+                OPTIONAL MATCH (contentStream)-[sourceContentStreamRel:SOURCE_CONTENT_STREAM]->(sourceContentStream:ContentStream)
+                RETURN workspace, baseWorkspace, contentStream, sourceContentStreamRel.sourceContentStreamVersion = sourceContentStream.version AS upToDateWithBase',
                 ['workspaceName' => $workspaceName->value]
             )
         );
-
         if (!$result->hasKey(0)) {
             return null;
         }
+
         $entry = $result->getAsCypherMap(0);
         $properties = $entry->getAsNode('workspace')->getProperties();
         $baseWorkspaceName = $entry->hasKey('baseWorkspace') && $entry->get('baseWorkspace') !== null ? $entry->getAsNode('baseWorkspace')->getProperty('name') : null;
         $contentStream = $entry->getAsNode('contentStream');
+        $upToDateWithBase = $entry->hasKey('upToDateWithBase') ? $entry->get('upToDateWithBase') : false;
 
+        if ($baseWorkspaceName === null) {
+            $status = WorkspaceStatus::UP_TO_DATE;
+        } elseif ($upToDateWithBase === true) {
+            $status = WorkspaceStatus::UP_TO_DATE;
+        } else {
+            $status = WorkspaceStatus::OUTDATED;
+        }
         return Workspace::create(
             WorkspaceName::fromString($properties['name']),
             $baseWorkspaceName ? WorkspaceName::fromString($baseWorkspaceName) : null,
             ContentStreamId::fromString($contentStream->getProperty('contentStreamId')),
-            $contentStream->getProperty('hasChanges') === 0 ?
-                WorkspaceStatus::UP_TO_DATE :
-                WorkspaceStatus::OUTDATED,
+            $status,
             $contentStream->getProperty('hasChanges') !== 0 && $baseWorkspaceName !== null,
         );
     }
 
     public function findWorkspaces(): Workspaces
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         $result = $this->client->runStatement(
             Statement::create(
                 'MATCH (workspace:Workspace)-[:CONTENT_STREAM]->(contentStream:ContentStream)
                 OPTIONAL MATCH (workspace)-[:BASE_WORKSPACE]->(baseWorkspace:Workspace)
-                RETURN workspace, baseWorkspace, contentStream',
+                OPTIONAL MATCH (contentStream)-[sourceContentStreamRel:SOURCE_CONTENT_STREAM]->(sourceContentStream:ContentStream)
+                RETURN workspace, baseWorkspace, contentStream, sourceContentStreamRel.sourceContentStreamVersion = sourceContentStream.version AS upToDateWithBase
+                ORDER BY workspace.name',
             )
         );
         return Workspaces::fromArray(
@@ -140,14 +154,20 @@ class Neo4jContentGraphReadModelAdapter implements ContentGraphReadModelInterfac
                 $properties = $entry->getAsNode('workspace')->getProperties();
                 $baseWorkspaceName = $entry->hasKey('baseWorkspace') && $entry->get('baseWorkspace') !== null ? $entry->getAsNode('baseWorkspace')->getProperty('name') : null;
                 $contentStream = $entry->getAsNode('contentStream');
+                $upToDateWithBase = $entry->hasKey('upToDateWithBase') ? $entry->get('upToDateWithBase') : false;
 
+                if ($baseWorkspaceName === null) {
+                    $status = WorkspaceStatus::UP_TO_DATE;
+                } elseif ($upToDateWithBase === true) {
+                    $status = WorkspaceStatus::UP_TO_DATE;
+                } else {
+                    $status = WorkspaceStatus::OUTDATED;
+                }
                 return Workspace::create(
                     WorkspaceName::fromString($properties['name']),
                     $baseWorkspaceName ? WorkspaceName::fromString($baseWorkspaceName) : null,
                     ContentStreamId::fromString($contentStream->getProperty('contentStreamId')),
-                    $contentStream->getProperty('hasChanges') === 0 || $baseWorkspaceName !== null ?
-                        WorkspaceStatus::UP_TO_DATE :
-                        WorkspaceStatus::OUTDATED,
+                    $status,
                     $contentStream->getProperty('hasChanges') !== 0 && $baseWorkspaceName !== null,
                 );
             })->toArray()

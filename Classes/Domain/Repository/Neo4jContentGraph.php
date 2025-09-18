@@ -38,6 +38,7 @@ class Neo4jContentGraph implements ContentGraphInterface
         private readonly NodeFactory $nodeFactory,
         private readonly Neo4jDimensionSpacePointsRepository $dimensionSpacePointsRepository,
         private readonly NodeTypeManager $nodeTypeManager,
+        private readonly bool $debug = false,
     ) {
     }
 
@@ -46,6 +47,7 @@ class Neo4jContentGraph implements ContentGraphInterface
      */
     public function getContentRepositoryId(): ContentRepositoryId
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         return $this->contentRepositoryId;
     }
 
@@ -54,6 +56,7 @@ class Neo4jContentGraph implements ContentGraphInterface
      */
     public function getWorkspaceName(): WorkspaceName
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         return $this->workspaceName;
     }
 
@@ -64,6 +67,7 @@ class Neo4jContentGraph implements ContentGraphInterface
         DimensionSpacePoint $dimensionSpacePoint,
         VisibilityConstraints $visibilityConstraints
     ): ContentSubgraphInterface {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         return new Neo4jContentSubgraph(
             $this->contentRepositoryId,
             $this->workspaceName,
@@ -81,6 +85,7 @@ class Neo4jContentGraph implements ContentGraphInterface
      */
     public function findRootNodeAggregateByType(NodeTypeName $nodeTypeName): ?NodeAggregate
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         $filter = Filter\FindRootNodeAggregatesFilter::create($nodeTypeName);
         $aggregates = $this->findRootNodeAggregates($filter);
         if ($aggregates->isEmpty()) {
@@ -94,6 +99,7 @@ class Neo4jContentGraph implements ContentGraphInterface
      */
     public function findRootNodeAggregates(Filter\FindRootNodeAggregatesFilter $filter): NodeAggregates
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         $statement = NodeQueryBuilder::createForNodes()
             ->matchNodeWithRootRelation($this->getContentStreamId())
             ->where(!empty($filter->nodeTypeName) ? 'n.nodeTypeName = $nodeTypeName' : '')
@@ -116,6 +122,7 @@ class Neo4jContentGraph implements ContentGraphInterface
      */
     public function findNodeAggregatesByType(NodeTypeName $nodeTypeName): NodeAggregates
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         $result = $this->client->runStatement(
             NodeQueryBuilder::createForNodes()
                 ->match('(n:Node {nodeTypeName: $nodeTypeName})-[rel:IS_CHILD {contentStreamId: $contentStreamId}]->()')
@@ -138,6 +145,7 @@ class Neo4jContentGraph implements ContentGraphInterface
      */
     public function findNodeAggregateById(NodeAggregateId $nodeAggregateId): ?NodeAggregate
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         $result = $this->client->runStatement(
             NodeQueryBuilder::createForNodes()
                 ->match('(n:Node {aggregateId: $aggregateId})-[rel:IS_CHILD {contentStreamId: $contentStreamId}]->()')
@@ -159,25 +167,24 @@ class Neo4jContentGraph implements ContentGraphInterface
      */
     public function findNodeAggregatesByIds(NodeAggregateIds $nodeAggregateIds): NodeAggregates
     {
-        $nodeAggregates = [];
-        foreach ($nodeAggregateIds as $nodeAggregateId) {
-            $result = $this->client->runStatement(
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
+        return $this->nodeFactory->mapResultToNodeAggregates(
+            $this->client->runStatement(
                 NodeQueryBuilder::createForNodes()
-                    ->matchNodeForContentStream($this->contentStreamId, $nodeAggregateId)
+                    ->matchNodesForContentStream($this->contentStreamId)
+                    ->where('n.aggregateId IN $aggregateIds')
+                            ->withParameter('aggregateIds', $nodeAggregateIds->toStringArray())
+                    ->orderBy('ID(n)', 'DESC')
                     ->returnStandardNodeFields()
                     ->build()
-            );
-            $nodeAggregates[] = $this->nodeFactory->mapResultToNodeAggregate(
-                $result,
-                $this->workspaceName,
-            );
-        }
-
-        return NodeAggregates::fromArray($nodeAggregates);
+            ),
+            $this->workspaceName
+        );
     }
 
     public function findUsedNodeTypeNames(): NodeTypeNames
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         $result = $this->client->runStatement(
             Statement::create(
                 'MATCH (n:Node) RETURN DISTINCT n.nodeTypeName AS nodeTypeName',
@@ -197,6 +204,7 @@ class Neo4jContentGraph implements ContentGraphInterface
         NodeAggregateId $childNodeAggregateId,
         OriginDimensionSpacePoint $childOriginDimensionSpacePoint
     ): ?NodeAggregate {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         $result = $this->client->runStatement(
             NodeQueryBuilder::createForNodes()
                 ->matchNodeForSubgraph($this->contentStreamId, $childOriginDimensionSpacePoint->toDimensionSpacePoint(), $childNodeAggregateId, '', '', 'parentNode')
@@ -219,6 +227,7 @@ class Neo4jContentGraph implements ContentGraphInterface
      */
     public function findParentNodeAggregates(NodeAggregateId $childNodeAggregateId): NodeAggregates
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         $result = $this->client->runStatement(
             NodeQueryBuilder::createForNodes()
                 ->match('(:Node {aggregateId: $aggregateId})-[:IS_CHILD {contentStreamId: $contentStreamId}]->(parentNode:Node)')
@@ -228,6 +237,7 @@ class Neo4jContentGraph implements ContentGraphInterface
                     'contentStreamId' => $this->getContentStreamId()->value,
                 ])
                 ->returnStandardNodeFields()
+                ->orderBy('ID(n)', 'ASC')
                 ->build()
         );
 
@@ -245,13 +255,16 @@ class Neo4jContentGraph implements ContentGraphInterface
      */
     public function findAncestorNodeAggregateIds(NodeAggregateId $entryNodeAggregateId): NodeAggregateIds
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
+
+        // Find all ancestor aggregate IDs across all dimension space points in this content stream
         $result = $this->client->runStatement(
             Statement::create(
-                'MATCH (n:Node {aggregateId: $aggregateId})-[:IS_CHILD {contentStreamId: $contentStreamId}]->(ancestorNode:Node)
+                'MATCH (n:Node {aggregateId: $aggregateId})-[rels:IS_CHILD*1..]->(ancestorNode:Node|Root)
+                WHERE ancestorNode:Node
                 RETURN DISTINCT ancestorNode.aggregateId AS aggregateId',
                 [
                     'aggregateId' => $entryNodeAggregateId->value,
-                    'contentStreamId' => $this->getContentStreamId()->value,
                 ]
             )
         );
@@ -266,6 +279,7 @@ class Neo4jContentGraph implements ContentGraphInterface
      */
     public function findChildNodeAggregates(NodeAggregateId $parentNodeAggregateId): NodeAggregates
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         $result = $this->client->runStatement(
             NodeQueryBuilder::createForNodes()
                 ->matchNodeForContentStream($this->contentStreamId, $parentNodeAggregateId, 'original', '')
@@ -286,6 +300,7 @@ class Neo4jContentGraph implements ContentGraphInterface
      */
     public function findChildNodeAggregateByName(NodeAggregateId $parentNodeAggregateId, NodeName $name): ?NodeAggregate
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         $result = $this->client->runStatement(
             NodeQueryBuilder::createForNodes()
                 ->match('(original:Node {aggregateId: $aggregateId})-[:IS_CHILD {contentStreamId: $contentStreamId}]->()')
@@ -313,6 +328,7 @@ class Neo4jContentGraph implements ContentGraphInterface
      */
     public function findTetheredChildNodeAggregates(NodeAggregateId $parentNodeAggregateId): NodeAggregates
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         $result = $this->client->runStatement(
             NodeQueryBuilder::createForNodes()
                 ->matchNodeForContentStream($this->contentStreamId, $parentNodeAggregateId, 'original', '')
@@ -338,6 +354,7 @@ class Neo4jContentGraph implements ContentGraphInterface
         OriginDimensionSpacePoint $parentNodeOriginDimensionSpacePoint,
         DimensionSpacePointSet $dimensionSpacePointsToCheck
     ): DimensionSpacePointSet {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         $result = $this->client->runStatement(
             Statement::create(
                 'MATCH (parentNode:Node {aggregateId: $aggregateId, originDimensionSpacePointHash: $originDimensionSpacePointHash})-[:IS_CHILD {contentStreamId: $contentStreamId}]->()
@@ -370,18 +387,22 @@ class Neo4jContentGraph implements ContentGraphInterface
      */
     public function findNodeAggregatesTaggedBy(SubtreeTag $subtreeTag): NodeAggregates
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         $result = $this->client->runStatement(
             NodeQueryBuilder::createForNodes()
                 ->matchNodesForContentStream($this->contentStreamId)
-                ->where(sprintf('apoc.convert.fromJsonMap(rel.subtreeTags).%s', $subtreeTag->value))
+                ->where(sprintf('apoc.convert.fromJsonMap(rel.subtreeTags).%s = true', $subtreeTag->value))
+                ->with('COLLECT(DISTINCT n) AS matchingNodes')
+                ->unwind('matchingNodes AS n')
+                ->match('(n)-[rel:IS_CHILD {contentStreamId: "cs-identifier"}]->(:Node|Root)')
                 ->returnStandardNodeFields()
+                ->orderBy('ID(n)', 'DESC')
                 ->build()
         );
 
         if ($result->isEmpty()) {
             return NodeAggregates::createEmpty();
         }
-
         return $this->nodeFactory->mapResultToNodeAggregates($result, $this->workspaceName);
     }
 
@@ -390,6 +411,7 @@ class Neo4jContentGraph implements ContentGraphInterface
      */
     public function getContentStreamId(): ContentStreamId
     {
+        if ($this->debug) \Neos\Flow\var_dump(__METHOD__);
         return $this->contentStreamId;
     }
 }

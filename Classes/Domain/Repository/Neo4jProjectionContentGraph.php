@@ -44,8 +44,7 @@ class Neo4jProjectionContentGraph
             );
             if ($succeedingNode->hasKey(0) && $succeedingNode->getAsCypherMap(0)->hasKey('rel')) {
                 $node = $succeedingNode->getAsCypherMap(0)->getAsRelationship('rel');
-                /** @var int $succeedingSiblingNodePosition */
-                $succeedingSiblingNodePosition = $node->getProperty('position');
+                $succeedingSiblingNodePosition = $node->getProperties()->getAsInt('position');
                 $parentNode = $succeedingNode->getAsCypherMap(0)->getAsNode('p');
                 $parentNodeAggregateId = NodeAggregateId::fromString($parentNode->getProperty('aggregateId'));
                 $precedingSiblingNode = $this->client->runStatement(
@@ -62,7 +61,7 @@ class Neo4jProjectionContentGraph
                     ->build()
                 );
                 if ($precedingSiblingNode->hasKey(0) && $precedingSiblingNode->getAsCypherMap(0)->hasKey('rel')) {
-                    $preceedingSiblingNodePosition = $precedingSiblingNode->getAsCypherMap(0)->getAsRelationship('rel')->getProperty('position');
+                    $preceedingSiblingNodePosition = $precedingSiblingNode->getAsCypherMap(0)->getAsRelationship('rel')->getProperties()->getAsInt('position');
                     return ($succeedingSiblingNodePosition + $preceedingSiblingNodePosition) / 2;
                 } else {
                     return $succeedingSiblingNodePosition - Neo4jContentGraphProjection::RELATION_DEFAULT_OFFSET;
@@ -86,7 +85,7 @@ class Neo4jProjectionContentGraph
                     ->build()
             );
             if ($childNodeRelationResult->hasKey(0) && $childNodeRelationResult->getAsCypherMap(0)->hasKey('rel')) {
-                return $childNodeRelationResult->getAsCypherMap(0)->getAsRelationship('rel')->getProperty('position') + Neo4jContentGraphProjection::RELATION_DEFAULT_OFFSET;
+                return $childNodeRelationResult->getAsCypherMap(0)->getAsRelationship('rel')->getProperties()->getAsInt('position') + Neo4jContentGraphProjection::RELATION_DEFAULT_OFFSET;
             } else {
                 // WHAT TO DO HERE?
             }

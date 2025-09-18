@@ -60,8 +60,6 @@ trait ReferenceRelation
                     'MATCH (sourceNode:Node {aggregateId: $aggregateId})-[:IS_CHILD {contentStreamId: $contentStreamId, dimensionSpacePointHash: $dimensionSpacePointHash}]->()
                     MATCH (targetNode:Node {aggregateId: $referencedNodeAggregateId})-[:IS_CHILD {contentStreamId: $contentStreamId, dimensionSpacePointHash: $dimensionSpacePointHash}]->()
                     MERGE (sourceNode)-[newRef:REFERENCE {referenceName: $referenceName, position: $position}]->(targetNode)
-                    SET sourceNode.lastModified = $lastModified
-                    SET sourceNode.originalLastModified = $originalLastModified
                     RETURN newRef',
                     [
                         'aggregateId' => $sourceNodeAggregateId->value,
@@ -70,8 +68,6 @@ trait ReferenceRelation
                         'referenceName' => $reference->referenceName->value,
                         'position' => $position,
                         'referencedNodeAggregateId' => $nodeReference->targetNodeAggregateId->value,
-                        'lastModified' => $lastModified->format(\DateTimeInterface::ATOM),
-                        'originalLastModified' => $originalLastModified->format(\DateTimeInterface::ATOM),
                     ],
                 ));
                 if (empty($result) || !$result->hasKey(0) || !$result->getAsCypherMap(0)->hasKey('newRef')) {

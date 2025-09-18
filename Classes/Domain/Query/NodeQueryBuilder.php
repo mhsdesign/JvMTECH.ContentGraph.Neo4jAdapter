@@ -168,6 +168,13 @@ final class NodeQueryBuilder extends QueryBuilder
                    ->withParameter('dimensionSpacePointHash', $dimensionSpacePointHash);
     }
 
+    public function whereNodeInContentStream(
+        ContentStreamId $contentStreamId,
+        string $relationAlias = 'rel'
+    ): self {
+        return $this->where("{$relationAlias}.contentStreamId = \$contentStreamId")
+            ->withParameter('contentStreamId', $contentStreamId->value);
+    }
     public function returnStandardNodeFields(string $nodeAlias = 'n', string $relationAlias = 'rel'): self
     {
         return $this->returns(

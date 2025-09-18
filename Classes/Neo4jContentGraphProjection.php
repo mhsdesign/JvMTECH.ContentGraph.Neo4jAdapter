@@ -613,7 +613,7 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
         );
     }
 
-    private function whenNodeAggregateWithNodeWasCreated(
+    private function    whenNodeAggregateWithNodeWasCreated(
         NodeAggregateWithNodeWasCreated $event,
         EventEnvelope $eventEnvelope
     ): void {
@@ -644,7 +644,7 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
                     'originalCreated' => self::initiatingDateTime($eventEnvelope)->format(DateTimeInterface::ATOM),
                     'lastModified' => null,
                     'originalLastModified' => null,
-                    'properties' => json_encode($event->initialPropertyValues->jsonSerialize()),
+                    'properties' => $event->initialPropertyValues->count() === 0 ? '{}' : json_encode($event->initialPropertyValues->jsonSerialize()),
                 ]
             )
         );
@@ -678,8 +678,6 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
                     dimensionSpacePoint: $sibling->dimensionSpacePoint,
                     childAggregateId: NodeAggregateId::fromString($newlyCreatedNode->getProperty('aggregateId')),
                 ),
-                $eventEnvelope->recordedAt,
-                self::initiatingDateTime($eventEnvelope)
             );
         }
     }
@@ -990,12 +988,12 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
         $this->client->runStatement(
             Statement::create(
                 'MATCH (n) WHERE ID(n) = $nodeId
-                    SET n.properties = $nodeTypeName
+                    SET n.properties = $properties
                     SET n.lastModified = $lastModified
                     SET n.originalLastModified = $originalLastModified',
                 [
                     'nodeId' => $affectedNode->getId(),
-                    'nodeTypeName' => $this->mergeNodeProperties(
+                    'properties' => $this->mergeNodeProperties(
                         $event->propertyValues,
                         $event->propertiesToUnset,
                         $event->getNodeAggregateId(),
@@ -1101,8 +1099,6 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
                 ->returns('newNode, newRel')
                 ->build()
         );
-        \Neos\Flow\var_dump($statement);
-        \Neos\Flow\var_dump($result);
     }
     private function whenNodeSpecializationVariantWasCreated(
         NodeSpecializationVariantWasCreated $event,
@@ -1154,6 +1150,8 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
                 ->setProperty('created', $eventEnvelope->recordedAt->format(DateTimeInterface::ATOM), 'generalizedNode')
                 ->setProperty('originalCreated', self::initiatingDateTime($eventEnvelope)->format(DateTimeInterface::ATOM),
                     'generalizedNode')
+                ->setProperty('lastModified', null, 'generalizedNode')
+                ->setProperty('originalLastModified', null, 'generalizedNode')
                 ->with('generalizedNode, n, p, rel')
                 ->optionalMatch('(generalizedNode)-[generalizedRel:IS_CHILD]-() DELETE generalizedRel')
                 ->returns('*')
@@ -1505,6 +1503,9 @@ class Neo4jContentGraphProjection implements ContentGraphProjectionInterface
             unset($existingSerializedProperties[$propertyName->value]);
         }
 
+        if ($existingSerializedProperties === []) {
+            return '{}';
+        }
         return json_encode($existingSerializedProperties);
     }
 
