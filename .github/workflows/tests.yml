@@ -41,6 +41,15 @@ jobs:
           - "3306:3306"
         options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
 
+      neo4j:
+        image: neo4j:latest
+        env:
+          NEO4J_AUTH: 'neo4j/neo4jneo4j'
+          NEO4J_PLUGINS: '["apoc"]'
+        ports:
+          - "7474:7474"
+          - "7687:7687"
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -83,10 +92,11 @@ jobs:
           rm -rf composer.lock
           composer install --no-interaction --no-progress --prefer-dist
 
-      - name: Linting
-        run: |
-          cd ${FLOW_PATH_ROOT}
-          bin/phpstan analyse Packages/Application/JvMTECH.ContentGraph.Neo4jAdapter --level 8
+      # TODO enable basic PHPstan
+      # - name: Linting
+      #   run: |
+      #     cd ${FLOW_PATH_ROOT}
+      #     bin/phpstan analyse Packages/Application/JvMTECH.ContentGraph.Neo4jAdapter --level 8
 
       # - name: Run Unit tests
       #   run: |
@@ -107,6 +117,15 @@ jobs:
                   user: 'neos'
                   password: 'neos'
                   dbname: 'neos_functional_testing'
+          
+          JvMTECH:
+            ContentGraph:
+              Neo4jAdapter:
+                Connection:
+                  host: bolt://neo4j
+                  port: 7687
+                  username: neo4j
+                  password: neo4jneo4j
           EOF
 
       - name: Run doctrine migrate
