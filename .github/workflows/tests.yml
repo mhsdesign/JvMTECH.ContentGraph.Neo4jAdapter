@@ -42,7 +42,7 @@ jobs:
         options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
 
       neo4j:
-        image: neo4j:4.4
+        image: neo4j:5.26
         env:
           NEO4J_AUTH: 'neo4j/neo4jneo4j'
           NEO4J_PLUGINS: '["apoc"]'
