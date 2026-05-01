@@ -5,10 +5,12 @@ namespace JvMTECH\ContentGraph\Neo4jAdapter\Domain\Query;
 
 use Laudis\Neo4j\Types\Node;
 use Neos\ContentRepository\Core\NodeType\NodeTypeNames;
+use Neos\ContentRepository\Core\Projection\ContentGraph\VisibilityConstraints;
 use Neos\ContentRepository\Core\SharedModel\Node\NodeAggregateId;
 use Neos\ContentRepository\Core\SharedModel\Workspace\ContentStreamId;
 use Neos\ContentRepository\Core\NodeType\NodeTypeName;
 use Neos\ContentRepository\Core\DimensionSpace\DimensionSpacePoint;
+use Ramsey\Uuid\Uuid;
 
 /**
  * Specialized query builder for Node-related queries
@@ -41,14 +43,49 @@ final class NodeQueryBuilder extends QueryBuilder
         string $nodeAlias = 'n',
         string $relationAlias = 'rel',
         string $parentAlias = 'p',
+        string $parameterAlias = 'alias'
     ): self {
-        return $this->match("({$nodeAlias}:Node {aggregateId: \$aggregateId})-[{$relationAlias}:IS_CHILD {contentStreamId: \$contentStreamId, dimensionSpacePointHash: \$dimensionSpacePointHash}]->({$parentAlias}:Node|Root)")
+        return $this->match("({$nodeAlias}:Node {aggregateId: \$aggregateId$parameterAlias})-[{$relationAlias}:IS_CHILD {contentStreamId: \$contentStreamId, dimensionSpacePointHash: \$dimensionSpacePointHash}]->({$parentAlias}:Node|Root)")
            ->withParameter(
-               'aggregateId',
+               'aggregateId'. $parameterAlias,
                $nodeAggregateId instanceof NodeAggregateId ? $nodeAggregateId->value : $nodeAggregateId->getProperty('aggregateId')
            )
            ->withParameter('contentStreamId', $contentStreamId->value)
            ->withParameter('dimensionSpacePointHash', $dimensionSpacePoint->hash);
+    }
+
+    public function withVisibilityConstraints(
+        VisibilityConstraints $visibilityConstraints,
+        string $relationAlias= 'rel',
+    ): self
+    {
+        foreach ($visibilityConstraints as $constraint) {
+            foreach ($constraint as $subtreeTag) {
+                $this->where(sprintf('COALESCE(apoc.convert.fromJsonMap(%s.subtreeTags).%s, false) = false', $relationAlias, $subtreeTag->value));
+            }
+        }
+        return $this;
+    }
+
+    public function matchNodeForContentStream(
+        ContentStreamId $contentStreamId,
+        NodeAggregateId $nodeAggregateId,
+        string $nodeAlias = 'n',
+        string $relationAlias = 'rel'
+    ): self
+    {
+        return $this->match("({$nodeAlias}:Node {aggregateId: \$aggregateId})-[{$relationAlias}:IS_CHILD {contentStreamId: \$contentStreamId}]->()")
+            ->withParameter('aggregateId', $nodeAggregateId->value)
+            ->withParameter('contentStreamId', $contentStreamId->value);
+    }
+
+    public function matchNodesForContentStream(
+        ContentStreamId $contentStreamId,
+        string $nodeAlias = 'n',
+        string $relationAlias = 'rel'
+    ): self {
+        return $this->match("({$nodeAlias}:Node)-[{$relationAlias}:IS_CHILD {contentStreamId: \$contentStreamId}]->(:Node|Root)")
+            ->withParameter('contentStreamId', $contentStreamId->value);
     }
 
     public function matchChildrenForSubgraph(
@@ -59,7 +96,7 @@ final class NodeQueryBuilder extends QueryBuilder
         string $relationAlias = 'rel',
         string $parentAlias = 'p'
     ): self {
-        return $this->match("({$parentAlias}:Node|Root {aggregateId: \$aggregateId})<-[{$relationAlias}:IS_CHILD {contentStreamId: \$contentStreamId, dimensionSpacePointHash: \$dimensionSpacePointHash}]-({$nodeAlias}:Node)")
+        return $this->match("({$parentAlias}:Node {aggregateId: \$aggregateId})<-[{$relationAlias}:IS_CHILD {contentStreamId: \$contentStreamId, dimensionSpacePointHash: \$dimensionSpacePointHash}]-({$nodeAlias}:Node)")
            ->withParameter('aggregateId',
                $parentNodeAggregateId instanceof NodeAggregateId ? $parentNodeAggregateId->value : $parentNodeAggregateId->getProperty('aggregateId')
            )
@@ -123,7 +160,7 @@ final class NodeQueryBuilder extends QueryBuilder
                    ->withParameter('contentStreamId', $contentStreamId->value);
     }
 
-    public function matchNodeInDimensionSpace(
+    public function whereNodeInDimensionSpace(
         string $dimensionSpacePointHash,
         string $relationAlias = 'rel'
     ): self {
@@ -131,6 +168,13 @@ final class NodeQueryBuilder extends QueryBuilder
                    ->withParameter('dimensionSpacePointHash', $dimensionSpacePointHash);
     }
 
+    public function whereNodeInContentStream(
+        ContentStreamId $contentStreamId,
+        string $relationAlias = 'rel'
+    ): self {
+        return $this->where("{$relationAlias}.contentStreamId = \$contentStreamId")
+            ->withParameter('contentStreamId', $contentStreamId->value);
+    }
     public function returnStandardNodeFields(string $nodeAlias = 'n', string $relationAlias = 'rel'): self
     {
         return $this->returns(
@@ -146,9 +190,11 @@ final class NodeQueryBuilder extends QueryBuilder
             "{$nodeAlias}.properties as properties, " .
             "{$relationAlias}.dimensionSpacePointHash as dimensionSpacePointHash, " .
             "{$relationAlias}.contentStreamId as contentStreamId, " .
-            "{$relationAlias}.position as position"
+            "{$relationAlias}.position as position, " .
+            "{$relationAlias}.subtreeTags as subtreeTags"
         );
     }
+
 
     public function whereNodeTypeIn(NodeTypeNames|array $nodeTypeNames, string $nodeAlias = 'n', string $parameterAlias = 'allowedNodeTypes', bool $negate = false): self
     {

@@ -68,7 +68,7 @@ trait Workspace
             Statement::create(
                 'MATCH (workspace:Workspace {name: $workspaceName})
                  MATCH (workspace)-[bwRel:BASE_WORKSPACE]->()
-                 MATCH (workspace-[csRel:CONTENT_STREAM]->()
+                 MATCH (workspace)-[csRel:CONTENT_STREAM]->()
                  DELETE bwRel, csRel
                  WITH workspace
                  MATCH (newBw:Workspace {name: $baseWorkspaceName})

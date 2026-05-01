@@ -3,7 +3,7 @@
     "name": "jvmtech/contentgraph-neo4jadapter",
     "type": "neos-package",
     "require": {
-        "neos/flow": "*",
+        "neos/contentrepositoryregistry": "*",
         "laudis/neo4j-php-client": "^3.2.0"
     },
     "autoload": {

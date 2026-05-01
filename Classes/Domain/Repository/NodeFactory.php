@@ -11,6 +11,7 @@ use Neos\ContentRepository\Core\DimensionSpace\DimensionSpacePointSet;
 use Neos\ContentRepository\Core\DimensionSpace\OriginDimensionSpacePoint;
 use Neos\ContentRepository\Core\DimensionSpace\OriginDimensionSpacePointSet;
 use Neos\ContentRepository\Core\Feature\NodeModification\Dto\SerializedPropertyValues;
+use Neos\ContentRepository\Core\Feature\SubtreeTagging\Dto\SubtreeTags;
 use Neos\ContentRepository\Core\Infrastructure\Property\PropertyConverter;
 use Neos\ContentRepository\Core\NodeType\NodeTypeName;
 use Neos\ContentRepository\Core\Projection\ContentGraph\CoverageByOrigin;
@@ -67,7 +68,7 @@ final class NodeFactory
         }
 
         $nodeAggregates = [];
-        foreach ($recordsByNodeAggregateId as $nodeAggregateId => $records) {
+        foreach ($recordsByNodeAggregateId as $records) {
             $nodeAggregate = $this->createNodeAggregateFromRecords($records, $workspaceName);
             if ($nodeAggregate !== null) {
                 $nodeAggregates[] = $nodeAggregate;
@@ -88,13 +89,7 @@ final class NodeFactory
             return null;
         }
 
-        // Convert all records to array and create a single NodeAggregate
-        $records = [];
-        foreach ($result as $record) {
-            $records[] = $record;
-        }
-
-        return $this->createNodeAggregateFromRecords($records, $workspaceName);
+        return $this->createNodeAggregateFromRecords($result->toArray(), $workspaceName);
     }
 
     /**
@@ -120,6 +115,10 @@ final class NodeFactory
         $occupationByCovering = [];
         $nodeTagsByCoveredDimensionSpacePoint = [];
 
+        usort($records, function (CypherMap $a, CypherMap $b) {
+            // Sort by originDimensionSpacePointHash to ensure consistent ordering
+            return strcmp($a->get('dimensionSpacePointHash'), $b->get('dimensionSpacePointHash'));
+        });
         foreach ($records as $record) {
             $originDimensionSpacePointHash = $record->get('originDimensionSpacePointHash');
             $dimensionSpacePointHash = $record->get('dimensionSpacePointHash');
@@ -146,7 +145,7 @@ final class NodeFactory
             // Build coverage mappings
             $coverageByOccupants[$originDimensionSpacePoint->hash][$coveredDimensionSpacePoint->hash] = $coveredDimensionSpacePoint;
             $occupationByCovering[$coveredDimensionSpacePoint->hash] = $originDimensionSpacePoint;
-            $nodeTagsByCoveredDimensionSpacePoint[$coveredDimensionSpacePoint->hash] = NodeTags::createEmpty();
+            $nodeTagsByCoveredDimensionSpacePoint[$coveredDimensionSpacePoint->hash] = self::extractNodeTagsFromJson($record->get('subtreeTags') ?: '{}');
         }
 
         return NodeAggregate::create(
@@ -171,21 +170,40 @@ final class NodeFactory
         DimensionSpacePoint $dimensionSpacePoint,
         VisibilityConstraints $visibilityConstraints
     ): Node {
-        if ($record instanceof \Laudis\Neo4j\Types\Node) {
-            $record = $record->getProperties();
+        // Handle case where we have a full record with both node and relationship data
+        if ($record instanceof CypherMap && (($record->hasKey('n') && $record->hasKey('rel')) || ($record->hasKey('node') && $record->hasKey('rel')))) {
+            $nodeKey = $record->hasKey('n') ? 'n' : 'node';
+            $nodeData = $record->getAsNode($nodeKey)->getProperties();
+            $relationshipData = $record->getAsRelationship('rel');
+            $subtreeTagsJson = '{}';
+            if ($relationshipData->getProperties()->offsetExists('subtreeTags')) {
+                $subtreeTagsJson = $relationshipData->getProperty('subtreeTags') ?: '{}';
+            }
+            $nodeTags = self::extractNodeTagsFromJson($subtreeTagsJson);
         }
+        // Handle case where we only have node data
+        elseif ($record instanceof \Laudis\Neo4j\Types\Node) {
+            $nodeData = $record->getProperties();
+            $nodeTags = NodeTags::createEmpty();
+        }
+        // Handle case where we have a CypherMap with node data
+        else {
+            $nodeData = $record;
+            $nodeTags = NodeTags::createEmpty();
+        }
+
         return Node::create(
             $this->contentRepositoryId,
             $workspaceName,
             $dimensionSpacePoint,
-            NodeAggregateId::fromString($record->get('aggregateId')),
-            $this->resolveDimensionSpacePointFromHash($record->get('originDimensionSpacePointHash')),
-            NodeAggregateClassification::from($record->get('classification')),
-            NodeTypeName::fromString($record->get('nodeTypeName')),
-            $this->createPropertyCollectionFromJsonString($record->hasKey('properties') ? ($record->get('properties') ?: '{}') : '{}'),
-            ($record->hasKey('name') && !empty($record->get('name'))) ? NodeName::fromString($record->get('name')) : null,
-            NodeTags::createEmpty(), // TODO: Extract from Neo4j record if needed
-            $this->createTimestampsFromRecord($record),
+            NodeAggregateId::fromString($nodeData->get('aggregateId')),
+            $this->resolveDimensionSpacePointFromHash($nodeData->get('originDimensionSpacePointHash')),
+            NodeAggregateClassification::from($nodeData->get('classification')),
+            NodeTypeName::fromString($nodeData->get('nodeTypeName')),
+            $this->createPropertyCollectionFromJsonString($nodeData->hasKey('properties') ? ($nodeData->get('properties') ?: '{}') : '{}'),
+            ($nodeData->hasKey('name') && !empty($nodeData->get('name'))) ? NodeName::fromString($nodeData->get('name')) : null,
+            $nodeTags,
+            $this->createTimestampsFromRecord($nodeData),
             $visibilityConstraints
         );
     }
@@ -221,7 +239,7 @@ final class NodeFactory
     ): ?Reference {
         $properties = null;
         try {
-            $properties = $relationship->getProperty('properties');
+            $properties = $relationship->getProperties()->hasKey('properties') ? $relationship->getProperties()->get('properties') : null;
         } catch (\Exception) {}
         return new Reference(
             $this->mapResultToNode(
@@ -231,10 +249,10 @@ final class NodeFactory
                 $visibilityConstraints
             ),
             ReferenceName::fromString($relationship->getProperty('referenceName')),
-            new PropertyCollection(
+            $properties ? new PropertyCollection(
                 SerializedPropertyValues::fromJsonString($properties ?: '{}'),
                 $this->propertyConverter,
-            ),
+            ) : null,
         );
     }
     /**
@@ -301,5 +319,27 @@ final class NodeFactory
     private function resolveCoveredDimensionSpacePointFromHash(?string $hash): DimensionSpacePoint
     {
         return $this->dimensionSpacePointsRepository->getOriginDimensionSpacePointByHash($hash)->toDimensionSpacePoint();
+    }
+
+    public static function extractNodeTagsFromJson(string $subtreeTagsJson): NodeTags
+    {
+        $explicitTags = [];
+        $inheritedTags = [];
+        try {
+            $subtreeTagsArray = json_decode($subtreeTagsJson, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $e) {
+            throw new \RuntimeException(sprintf('Failed to JSON-decode subtree tags from JSON string %s: %s', $subtreeTagsJson, $e->getMessage()), 1716476904, $e);
+        }
+        foreach ($subtreeTagsArray as $tagValue => $explicit) {
+            if ($explicit === true) {
+                $explicitTags[] = $tagValue;
+            } else {
+                $inheritedTags[] = $tagValue;
+            }
+        }
+        return NodeTags::create(
+            tags: SubtreeTags::fromStrings(...$explicitTags),
+            inheritedTags: SubtreeTags::fromStrings(...$inheritedTags)
+        );
     }
 }
