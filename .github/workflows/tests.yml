@@ -10,7 +10,7 @@ on:
 jobs:
   build:
     env:
-      FLOW_CONTEXT: Testing
+      FLOW_CONTEXT: Testing/Behat
       FLOW_PATH_ROOT: ../neos-base-distribution
 
     runs-on: ubuntu-latest
@@ -132,7 +132,7 @@ jobs:
         # prevent db transaction in connection from being closed by migrating in advance
         run: |
           cd ${FLOW_PATH_ROOT}
-          FLOW_CONTEXT=Testing/Behat ./flow doctrine:migrate --quiet
+          ./flow doctrine:migrate --quiet
 
       - name: Run behat Neos.ContentRepository.BehavioralTests tests
         run: |
