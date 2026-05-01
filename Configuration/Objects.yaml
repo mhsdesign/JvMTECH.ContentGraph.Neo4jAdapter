@@ -4,3 +4,10 @@ JvMTECH\ContentGraph\Neo4jAdapter\Neo4jContentGraphProjectionFactory:
   arguments:
     1:
       value: 'JvMTECH\ContentGraph\Neo4jAdapter\Neo4jContentGraphProjectionFactory'
+
+Neos\ContentRepository\Core\Projection\ContentGraph\ProjectionIntegrityViolationDetectionRunnerFactoryInterface:
+  scope: singleton
+  factoryObjectName: 'Neos\ContentRepositoryRegistry\Infrastructure\GenericObjectFactory'
+  arguments:
+    1:
+      value: 'JvMTECH\ContentGraph\Neo4jAdapter\Neos4jProjectionIntegrityViolationDetectionRunnerFactory'
