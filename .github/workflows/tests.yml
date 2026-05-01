@@ -137,6 +137,10 @@ jobs:
       - name: Run behat Neos.ContentRepository.BehavioralTests tests
         run: |
           cd ${FLOW_PATH_ROOT}
+          
+          # dump current configuration
+          ./flow configuration:show --path Neos.ContentRepositoryRegistry.presets.default
+          
           bin/behat -f progress --strict --no-interaction -c Packages/Neos/Neos.ContentRepository.BehavioralTests/Tests/Behavior/behat.yml.dist -vvv --stop-on-failure
 
       - name: Show log on failure
