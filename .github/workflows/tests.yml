@@ -1,0 +1,134 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, '[0-9]+.[0-9]' ]
+  pull_request:
+    branches: [ main, '[0-9]+.[0-9]' ]
+  workflow_dispatch: # Allow manual triggering on any branch via `gh workflow run tests.yml -r branch-name`
+
+jobs:
+  build:
+    env:
+      FLOW_CONTEXT: Testing
+      FLOW_PATH_ROOT: ../neos-base-distribution
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php-version: "8.2"
+            neos-version: "9.0"
+            # comment in this line to use a specific branch of the neos dev collection
+            # neos-dev-collection-branch: "bugfix/..."
+
+          - php-version: "8.2"
+            neos-version: "9.1"
+
+    services:
+      mariadb:
+        # see https://mariadb.com/kb/en/mariadb-server-release-dates/
+        # this should be a current release, e.g. the LTS version
+        image: mariadb:10.6
+        env:
+          MYSQL_USER: neos
+          MYSQL_PASSWORD: neos
+          MYSQL_DATABASE: neos_functional_testing
+          MYSQL_ROOT_PASSWORD: neos
+        ports:
+          - "3306:3306"
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: mbstring, xml, json, zlib, iconv, intl, pdo_sqlite, mysql
+
+      - id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - uses: actions/cache@v3
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.json') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Prepare Neos distribution
+        run: |
+          git clone --depth 1 --branch ${{ matrix.neos-version }} https://github.com/neos/neos-development-distribution.git ${FLOW_PATH_ROOT}
+          cd ${FLOW_PATH_ROOT}
+          
+          ${{ matrix.neos-dev-collection-branch &&
+              format('composer require --no-update --no-interaction "neos/neos-development-collection:dev-{0} as {1}.x-dev"', matrix.neos-dev-collection-branch, matrix.neos-version)
+          }}
+
+          composer config --no-plugins allow-plugins.neos/composer-plugin true
+          
+          composer config repositories.package '{ "type": "path", "url": "../JvMTECH.ContentGraph.Neo4jAdapter", "options": { "symlink": false } }'
+          composer require --no-update --no-interaction jvmtech/contentgraph-neo4jadapter:@dev
+          
+          composer require --dev --no-update --no-interaction phpstan/phpstan:^1.10
+
+      - name: Install dependencies
+        run: |
+          cd ${FLOW_PATH_ROOT}
+          rm -rf composer.lock
+          composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Linting
+        run: |
+          cd ${FLOW_PATH_ROOT}
+          bin/phpstan analyse Packages/Application/JvMTECH.ContentGraph.Neo4jAdapter --level 8
+
+      # - name: Run Unit tests
+      #   run: |
+      #     cd ${FLOW_PATH_ROOT}
+      #     bin/phpunit -c Build/BuildEssentials/PhpUnit/UnitTests.xml Packages/Application/JvMTECH.ContentGraph.Neo4jAdapter/Tests/Unit
+
+      - name: Setup Flow configuration
+        run: |
+          cd ${FLOW_PATH_ROOT}
+          rm -f Configuration/Testing/Settings.yaml
+          cat <<EOF >> Configuration/Testing/Settings.yaml
+          Neos:
+            Flow:
+              persistence:
+                backendOptions:
+                  host: '127.0.0.1'
+                  driver: pdo_mysql
+                  user: 'neos'
+                  password: 'neos'
+                  dbname: 'neos_functional_testing'
+          EOF
+
+      - name: Run doctrine migrate
+        # prevent db transaction in connection from being closed by migrating in advance
+        run: |
+          cd ${FLOW_PATH_ROOT}
+          FLOW_CONTEXT=Testing/Behat ./flow doctrine:migrate --quiet
+
+      - name: Run behat Neos.ContentRepository.BehavioralTests tests
+        run: |
+          cd ${FLOW_PATH_ROOT}
+          bin/behat -f progress --strict --no-interaction -c Packages/Neos/Neos.ContentRepository.BehavioralTests/Tests/Behavior/behat.yml.dist -vvv --stop-on-failure
+
+      - name: Show log on failure
+        if: ${{ failure()  }}
+        shell: bash
+        run: |
+          cd ${FLOW_PATH_ROOT}
+          # cat Data/Logs/System_Testing.log
+          if compgen -G "Data/Logs/Exceptions/*" > /dev/null; then
+            for file in Data/Logs/Exceptions/*; do
+              echo $file
+              cat $file
+            done
+          fi
