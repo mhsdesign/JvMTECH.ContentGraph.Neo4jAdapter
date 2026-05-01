@@ -122,7 +122,7 @@ jobs:
             ContentGraph:
               Neo4jAdapter:
                 Connection:
-                  host: bolt://neo4j:neo4jneo4j@neo4j
+                  host: bolt://localhost
                   username: neo4j
                   password: neo4jneo4j
           EOF
@@ -136,7 +136,7 @@ jobs:
       - name: Run behat Neos.ContentRepository.BehavioralTests tests
         run: |
           cd ${FLOW_PATH_ROOT}
-          
+
           # dump current configuration
           ./flow configuration:show --path Neos.ContentRepositoryRegistry.presets.default
           
