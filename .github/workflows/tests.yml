@@ -122,7 +122,7 @@ jobs:
             ContentGraph:
               Neo4jAdapter:
                 Connection:
-                  host: bolt://neo4j:7687
+                  host: bolt://neo4j:neo4jneo4j@neo4j
                   username: neo4j
                   password: neo4jneo4j
           EOF
